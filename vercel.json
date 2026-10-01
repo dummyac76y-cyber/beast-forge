@@ -1,16 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "builds": [
-    {
-      "src": "web/**",
-      "use": "@vercel/static",
-      "config": { "zeroConfig": true }
-    }
-  ],
-  "routes": [
-    { "handle": "filesystem" },
-    { "src": "/(.*)", "dest": "/web/index.html" }
-  ],
+  "outputDirectory": "web",
   "cleanUrls": true,
   "trailingSlash": false,
   "headers": [

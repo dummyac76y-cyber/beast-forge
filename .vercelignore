@@ -17,7 +17,12 @@ build.gradle.kts
 settings.gradle.kts
 gradle.properties
 gradle/
+.gradle/
+local.properties
 metadata.json
 
 .git/
 .gitignore
+
+# Repo-root docs; web/ ships its own README.md and CREDITS.md.
+README.md

@@ -50,6 +50,7 @@ class AssetStore {
     this.manifest = null;
     this.sprites = {};      // key -> { img, frameW, frameH, anchorX, anchorY, flipOnEnemy, cover }
     this.audio = {};        // key -> { buffer, volume }
+    this._rawAudio = {};    // key -> { bytes, volume }; decoded lazily after a gesture
     this.fonts = [];        // { family, weight }
     this.sources = [];      // human-readable attribution, surfaced in the UI
     this.loaded = false;
@@ -133,34 +134,45 @@ class AssetStore {
 
   _loadAudio(map) {
     if (!map) return Promise.resolve();
-    // Decoding needs an AudioContext. If none exists (no user gesture yet, or a
-    // locked-down browser) we defer: record the spec so play() can lazily fetch.
+    // Deliberately no AudioContext here. Constructing one during page load
+    // (before any user gesture) makes Chrome log "The AudioContext was not
+    // allowed to start", and the context starts suspended anyway. We only
+    // pull the raw bytes now; decodeAudioData runs later from unlock().
     const keys = Object.keys(map);
     if (!keys.length) return Promise.resolve();
-    const AC = typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext);
-    if (!AC) { this._pendingAudio = map; return Promise.resolve(); }
-    this._ac = this._ac || null;
-    const jobs = keys.map(key => this._decodeAudio(key, map[key]).then(() => key));
+    const jobs = keys.map(key => this._fetchAudio(key, map[key]).then(() => key));
     return Promise.all(jobs);
   }
 
-  _decodeAudio(key, spec) {
-    const AC = typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext);
-    if (!AC || !spec || !spec.file) return Promise.resolve();
+  _fetchAudio(key, spec) {
+    if (!spec || !spec.file) return Promise.resolve();
     return fetch(this.url(spec.file))
       .then(r => r.ok ? r.arrayBuffer() : Promise.reject(new Error('HTTP ' + r.status)))
-      .then(buf => {
-        // decodeAudioData needs a context; create a throwaway one if none exists yet.
-        const ctx = this._ac || (this._ac = new AC());
-        return new Promise((res, rej) => {
-          const p = ctx.decodeAudioData(buf, res, rej);
-          if (p && p.then) p.then(res, rej);   // older Safari callback-only form
-        });
-      })
-      .then(audio => {
-        this.audio[key] = { buffer: audio, volume: spec.volume !== undefined ? spec.volume : 0.8 };
+      .then(bytes => {
+        this._rawAudio[key] = { bytes, volume: spec.volume !== undefined ? spec.volume : 0.8 };
       })
       .catch(() => { this.stats.errors.push('audio ' + key + ': ' + spec.file); });
+  }
+
+  /**
+   * Decode any fetched-but-undecoded clips using an already-unlocked context.
+   * Called from AudioMan.unlock(), i.e. after a real user gesture, so the
+   * context is allowed to run. Safe to call repeatedly; idempotent.
+   */
+  decodePending(ctx) {
+    if (!ctx || typeof ctx.decodeAudioData !== 'function') return;
+    const keys = Object.keys(this._rawAudio);
+    for (const key of keys) {
+      const entry = this._rawAudio[key];
+      if (!entry || entry.pending || this.audio[key]) continue;
+      entry.pending = true;
+      new Promise((res, rej) => {
+        const p = ctx.decodeAudioData(entry.bytes, res, rej);
+        if (p && p.then) p.then(res, rej);   // older Safari callback-only form
+      })
+        .then(audio => { this.audio[key] = { buffer: audio, volume: entry.volume }; })
+        .catch(() => { this.stats.errors.push('audio decode ' + key); });
+    }
   }
 
   _loadFonts(list) {

@@ -42,9 +42,23 @@ class AudioMan {
 
   // Browsers require a user gesture before audio starts.
   unlock() {
-    if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume(); return; }
+    if (this.ctx) {
+      if (this.ctx.state === 'suspended') this.ctx.resume();
+      this._decodePending();
+      return;
+    }
     const AC = typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext);
-    if (AC) this.ctx = new AC();
+    if (!AC) return;
+    this.ctx = new AC();
+    // Now that a gesture-approved context exists, decode any manifest samples
+    // that were fetched but left undecoded during load.
+    this._decodePending();
+  }
+
+  _decodePending() {
+    if (this.ctx && this.assets && typeof this.assets.decodePending === 'function') {
+      try { this.assets.decodePending(this.ctx); } catch (e) { /* synthesis fallback */ }
+    }
   }
 
   /** Play a decoded sample from the manifest, if one was supplied. */
@@ -79,18 +93,24 @@ class AudioMan {
 
     const cue = CUES[key];
     if (!cue) return;
-    const [wave, f0, f1, dur, peak] = cue;
-    const vol = (volume === undefined ? 0.8 : volume) * peak;
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-    osc.type = wave;
-    osc.frequency.setValueAtTime(f0, now);
-    osc.frequency.exponentialRampToValueAtTime(Math.max(1, f1), now + dur);
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(vol, now + 0.012);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
-    osc.connect(gain); gain.connect(this.ctx.destination);
-    osc.start(now); osc.stop(now + dur + 0.02);
+    // Guarded like _playSample: a Web Audio failure (locked-down browser,
+    // suspended context, unsupported node type) must never break the caller.
+    try {
+      const [wave, f0, f1, dur, peak] = cue;
+      const vol = (volume === undefined ? 0.8 : volume) * peak;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = wave;
+      osc.frequency.setValueAtTime(f0, now);
+      osc.frequency.exponentialRampToValueAtTime(Math.max(1, f1), now + dur);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(vol, now + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+      osc.connect(gain); gain.connect(this.ctx.destination);
+      osc.start(now); osc.stop(now + dur + 0.02);
+    } catch (e) {
+      // Silent: sound is optional, gameplay is not.
+    }
   }
 }
 
