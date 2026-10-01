@@ -1,0 +1,24 @@
+# Excluded from the Vercel deployment only.
+# These stay tracked in git; this just keeps the upload small and avoids
+# publishing the third-party binary payload over HTTP.
+#
+# The site itself is built from web/** only (see vercel.json), so none of
+# this reaches the deployment output.
+
+# 24 MB commercial game APK -- not ours to redistribute.
+com.droidhen.fortconquer_v1.2.4-31_Android-4.1.apk
+*.apk
+
+# 22 MB unpacked APK tree, kept for reference only.
+extract/
+
+# Android / Gradle project -- the site is the web/ port.
+app/
+build.gradle.kts
+settings.gradle.kts
+gradle.properties
+gradle/
+metadata.json
+
+.git/
+.gitignore

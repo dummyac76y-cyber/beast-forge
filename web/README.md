@@ -15,11 +15,28 @@ modules), opening `index.html` via `file://` also works.
 
 ## Deploy
 
-Static — Vercel, Netlify, GitHub Pages, or any object store.
+Pure static — no build step, no dependencies, no server.
 
-**Vercel:** import the repo, set the root directory to `web`, framework
-"Other". Nothing to build. If you serve from the repo root instead, no
-`vercel.json` is needed either — `web/` is just a directory of static files.
+**Vercel:** import the repo and press Deploy. A root `vercel.json` already
+configures it: it builds `web/**` with `@vercel/static` (zeroConfig, so
+filenames are preserved — required because the manifest references exact font
+paths) and routes everything else to `web/index.html`.
+
+If you'd rather set it in the dashboard instead: **Root Directory = `web`**,
+Framework Preset **Other**, Build Command empty, Output Directory `.`. Both
+work — the config file makes the dashboard route optional.
+
+**Netlify:** drag the `web/` folder in, or set publish directory to `web`.
+**GitHub Pages:** set the source to the `web/` folder on `main`.
+
+A root `.vercelignore` keeps the 24 MB APK, the 22 MB `extract/` tree and the
+Android project out of the deployment. That's 49.5 MB of repo down to a 150 KB
+build output — and it means the commercial APK is never served over HTTP.
+
+> **No redirect hop.** Every asset path in the app is relative, so the build
+> works whether it's served from `/` or `/web/`. Verified by loading the page
+> over real HTTP at the `/web/` subpath: scripts, manifest, fonts, credits and
+> the battle loop all resolve and run.
 
 ## How it maps to the Kotlin source
 
@@ -159,3 +176,12 @@ attacks, evolutions and summoning, none of which are audible.
 
 Fixed in the web port by synthesising the cues. The Android build in `app/` is
 left exactly as generated — I did not modify it.
+## Deploy troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `404 NOT_FOUND` | Deployed with no static output — usually the APK-only repo before `web/` existed | Confirm the build log shows `web/**` being collected; `vercel.json` at the repo root |
+| Blank page, no menu | Scripts blocked or wrong mount | Check `vercel.json` has `"use": "@vercel/static"` with `"zeroConfig": true`; without `zeroConfig` filenames get hashed and the manifest's font paths 404 |
+| Game runs but no custom art | Manifest 404 or `fetch` unavailable | Console logs `[beast-forge] assets: <summary>`; check `assets/manifest.json` is served at `/assets/manifest.json` |
+| Fonts look like fallback serif | `assets/fonts/*.woff2` 404 | Confirm the build output preserved filenames |
+| Opens via `file://` and art/fonts are missing | `fetch` is blocked on `file://` | Serve over HTTP (`python3 -m http.server`). The game still plays — it falls back to procedural art |
