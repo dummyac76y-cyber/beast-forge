@@ -1,0 +1,6 @@
+{
+  "name": "Beast Forge",
+  "description": "Epic lane-defense strategy game. Forge and evolve ferocious beasts, defend your fort, command elemental powers, and conquer dark enemy towers.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:scaleX="0.65"
+        android:scaleY="0.65"
+        android:translateX="18.9"
+        android:translateY="18.9">
+        <!-- Dragon / Beast Crest Shield -->
+        <!-- Fiery Glow / Horns Outer -->
+        <path
+            android:fillColor="#FF5722"
+            android:pathData="M54,4 L68,24 L86,18 L76,40 L96,52 L78,64 L86,88 L54,104 L22,88 L30,64 L12,52 L32,40 L22,18 L40,24 Z" />
+        <!-- Shield Inner -->
+        <path
+            android:fillColor="#FFA000"
+            android:pathData="M54,12 L64,28 L80,24 L70,44 L86,54 L72,64 L78,84 L54,98 L30,84 L36,64 L22,54 L38,44 L28,24 L44,28 Z" />
+        <!-- Beast Core / Dark Iron Plate -->
+        <path
+            android:fillColor="#261C2C"
+            android:pathData="M54,20 C64,20 74,32 74,48 C74,70 54,88 54,88 C54,88 34,70 34,48 C34,32 44,20 54,20 Z" />
+        <!-- Glowing Beast Eyes -->
+        <path
+            android:fillColor="#FFD54F"
+            android:pathData="M44,46 L49,49 L44,52 Z" />
+        <path
+            android:fillColor="#FFD54F"
+            android:pathData="M64,46 L59,49 L64,52 Z" />
+        <!-- Forge Anvil / Blade Center -->
+        <path
+            android:fillColor="#FF3D00"
+            android:pathData="M51,32 L57,32 L55,68 L54,72 L53,68 Z" />
+    </group>
+</vector>
