@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fort Conquer APK — Static Analysis Report</title>
+<meta name="description" content="Component inventory and static analysis of com.droidhen.fortconquer v1.2.4 (APK code 31).">
+<link rel="stylesheet" href="/site.css">
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <span class="tag">static analysis</span>
+    <h1>Fort Conquer <span class="ver">v1.2.4</span></h1>
+    <p class="sub"><code>com.droidhen.fortconquer</code> · versionCode 31 · minSdk 16 / targetSdk 30 · compiled against SDK 30</p>
+    <p class="sub">Signed by alias <code>hzstudio</code> · self-signed, valid 2013-09-13 → 2037-04-17</p>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="note">
+    <strong>This APK cannot run in a browser.</strong>
+    It is a native Android application — Dalvik bytecode in <code>classes.dex</code> driving the
+    AndEngine OpenGL engine. There is no web build of it, so nothing here is interactive.
+    What follows is the read-only component inventory produced by unpacking and parsing the package.
+  </section>
+
+  <div class="tiles" id="tiles"></div>
+
+  <nav class="tabs" id="tabs">
+    <button class="on" data-p="overview">Overview</button>
+    <button data-p="components">Components</button>
+    <button data-p="manifest">Manifest</button>
+    <button data-p="code">Code</button>
+    <button data-p="network">Network</button>
+    <button data-p="findings">Findings</button>
+  </nav>
+
+  <section class="panel on" id="overview">
+    <h2>Package layout</h2>
+    <p>The archive contains 652 files totalling 28.3 MiB. Every entry below was extracted verbatim; no file was modified or re-encoded.</p>
+    <div id="treemap"></div>
+  </section>
+
+  <section class="panel" id="components">
+    <h2>Top-level components</h2>
+    <table id="tbl-comp"></table>
+    <h3>Assets breakdown</h3>
+    <div class="bars" id="gfx"></div>
+  </section>
+
+  <section class="panel" id="manifest">
+    <h2>Decoded AndroidManifest.xml</h2>
+    <p>The shipped manifest is Android binary XML. The following was produced by decoding the string pool and attribute chunks.</p>
+    <div class="grid2">
+      <div>
+        <h3>Permissions</h3>
+        <ul class="perms" id="perms"></ul>
+      </div>
+      <div>
+        <h3>Components</h3>
+        <ul class="comps" id="comps"></ul>
+      </div>
+    </div>
+    <h3>Application</h3>
+    <ul>
+      <li><code>android:name</code> — <code>androidx.multidex.MultiDexApplication</code></li>
+      <li><code>appComponentFactory</code> — <code>androidx.core.app.CoreComponentFactory</code></li>
+      <li>Play Billing <code>3.0.0</code>, Play Core split-install, AdMob 15.0.1</li>
+    </ul>
+  </section>
+
+  <section class="panel" id="code">
+    <h2>DEX inventory</h2>
+    <p><code>classes.dex</code> holds 5,280 classes and 41,148 strings. The 310 app classes cluster into a small number of subsystems:</p>
+    <div id="pkgs"></div>
+    <h3>Runtime class loading</h3>
+    <p>The AndEngine game engine is <strong>not</strong> in the DEX. It ships as <code>bin/andengine.jar</code> (596 KB, 519 classes under <code>org/anddev/andengine/</code>) and is loaded at runtime through <code>DexClassLoader</code>, which <code>bin/jarlist.cache</code> exists to manage.</p>
+  </section>
+
+  <section class="panel" id="network">
+    <h2>Network endpoints</h2>
+    <p>Exactly one first-party endpoint appears in the string pool. Everything else resolves to Google infrastructure pulled in by Play Services and AdMob.</p>
+    <h3>First-party</h3>
+    <ul class="urls" id="urls-first"></ul>
+    <h3>Google (SDK-supplied)</h3>
+    <ul class="urls" id="urls-google"></ul>
+  </section>
+
+  <section class="panel" id="findings">
+    <h2>Assessment &amp; findings</h2>
+    <p class="verdict">The internal structure is internally consistent with a genuine AndEngine card-battler by DroidHEN. There is no packer, no obfuscation, no native loader (<code>lib/</code> is absent entirely — zero <code>.so</code> files), and no exec or reflection-based code beyond AndEngine's own loader.</p>
+    <ul class="flags">
+      <li><span class="sev med">medium</span><strong>Unencrypted game server.</strong> <code>http://fortconquer.droidhen.com/FortConquer/game/Main.php</code> is plain HTTP. Any request/response on this path — including arena and shop traffic — is readable and modifiable by anyone on the network path.</li>
+      <li><span class="sev med">medium</span><strong><code>READ_PHONE_STATE</code> declared.</strong> This is a sensitive identifier permission on a game with no evident need for it beyond advertising ID access via Play Services <code>ads-identifier</code>.</li>
+      <li><span class="sev low">low</span><strong>Third-party repackaging.</strong> <code>ext/img/</code> holds 15 files of APK-hosting-portal branding (logo, splash, badge, favicon) and the archive filename carries an <code>Android-4.1</code> suffix. Neither originates with the developer, indicating this copy was redistributed by a download portal rather than produced by the original build pipeline.</li>
+      <li><span class="sev low">low</span><strong>Leftover development files.</strong> <code>uml/</code> contains an AndEngine class diagram (both <code>.ucls</code> and a rendered PNG) that shipped to production.</li>
+    </ul>
+    <h3>Payload hash</h3>
+    <ul class="hashes">
+      <li><strong>APK</strong> sha256 <code>933557dc1b5ba6c900b078689d269faf47c622fb3ea23acc3efa11b7c753cc92</code></li>
+    </ul>
+  </section>
+</main>
+
+<footer class="wrap">
+  <p>Generated by unpacking and statically parsing the archive. No code from the package was executed.</p>
+</footer>
+
+<script src="/site.js"></script>
+</body>
+</html>

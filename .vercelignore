@@ -1,0 +1,7 @@
+# Files excluded from the Vercel deployment only.
+# These stay tracked in git; this just keeps the deploy small and avoids
+# publishing the third-party binary payload over HTTP.
+com.droidhen.fortconquer_v1.2.4-31_Android-4.1.apk
+extract/
+.git/
+.gitignore
