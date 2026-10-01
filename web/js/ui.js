@@ -19,6 +19,10 @@
   let battleMode = 'campaign';
   let st_num = 1;
 
+  // Escape hatch: append ?2d to the URL to force the Canvas 2D renderer, which
+  // is useful for comparing the two and for troubleshooting WebGL problems.
+  const forceCanvas2D = /[?&]2d(?:[=&]|$)/.test(location.search);
+
   // ---------- boot ----------
   function boot() {
     repo = new GameRepository();
@@ -236,7 +240,7 @@
     tip.id = 'tip';
     host.appendChild(tip);
 
-    renderer = new Renderer(cv, assets);
+    renderer = makeRenderer(cv, assets);
     cv.addEventListener('mousemove', e => { hoveredLane = renderer.laneAtClientY(e.clientY); });
     cv.addEventListener('mouseleave', () => { hoveredLane = -1; });
     cv.addEventListener('click', e => {
@@ -246,6 +250,24 @@
 
     buildCardBar();
     refreshHud();
+  }
+
+  /**
+   * Prefer the WebGL renderer; fall back to the 2D canvas renderer when WebGL
+   * is unavailable or context creation fails (old devices, blocklists, headless
+   * test environments). Both expose the same interface:
+   * render(engine, selectedLane, hoveredLane), laneAtClientY(y), resize().
+   */
+  function makeRenderer(cv, assets) {
+    const three = globalThis.__beastForge3D;
+    if (three && typeof three.createRenderer3D === 'function' && !forceCanvas2D) {
+      try {
+        return three.createRenderer3D(cv);
+      } catch (e) {
+        console.warn('Beast Forge: WebGL unavailable, using 2D renderer.', e);
+      }
+    }
+    return new Renderer(cv, assets);
   }
 
   function buildCardBar() {

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Beast Forge — Web</title>
-<meta name="description" content="Browser port of the Beast Forge lane-defense strategy game. Kotlin/Compose reimplemented in vanilla JavaScript and Canvas 2D.">
+<meta name="description" content="Browser port of the Beast Forge lane-defense strategy game. Kotlin/Compose reimplemented in vanilla JavaScript with a WebGL 3D renderer.">
 <meta name="theme-color" content="#0C0A10">
 <link rel="stylesheet" href="css/style.css">
 </head>
@@ -39,5 +39,8 @@
   <script src="js/audio.js"></script>
   <script src="js/render.js"></script>
   <script src="js/ui.js"></script>
+  <!-- WebGL renderer. Deferred by definition, so it finishes executing before
+       the DOMContentLoaded handler in ui.js builds a battle screen. -->
+  <script type="module" src="js/render3d.js"></script>
 </body>
 </html>

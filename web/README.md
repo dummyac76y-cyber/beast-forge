@@ -46,7 +46,7 @@ build output — and it means the commercial APK is never served over HTTP.
 | `data/BeastCatalog.kt` | `js/catalog.js` | All 12 beasts, 12 stages, arena waves |
 | `game/BattleEngine.kt` | `js/engine.js` | Line-for-line behavioural port |
 | `data/GameRepository.kt` | `js/repo.js` | `SharedPreferences` → `localStorage` |
-| `ui/components/BeastRenderer.kt` | `js/render.js` | Compose `DrawScope` → Canvas 2D |
+| `ui/components/BeastRenderer.kt` | `js/render3d.js` (+ `js/render.js` fallback) | Compose `DrawScope` → WebGL 3D |
 | `ui/screens/*`, `MainActivity.kt` | `js/ui.js` | Compose screens → DOM + rAF loop |
 | `audio/SoundManager.kt` | `js/audio.js` | Web Audio synth (see note) |
 | — | `js/assets.js` | Optional manifest loader for real sprites/fonts/audio |
@@ -135,9 +135,18 @@ completely silent despite the README claiming "full authentic sound effects".
 Rather than reproduce that, `js/audio.js` synthesises equivalent cues with
 oscillators. Same `play(key)` signature.
 
-**Drawing uses Canvas 2D, not WebGL.** The original is a Compose `DrawScope`
-pipeline doing per-unit vector shapes (circles, rects, paths) — not textures.
-Canvas 2D reproduces it faithfully and keeps the port dependency-free.
+**Drawing is 3D (WebGL), with a Canvas 2D fallback.** The original is a
+Compose `DrawScope` pipeline doing per-unit vector shapes — not textures.
+`js/render3d.js` replaces that with a real WebGL scene: geometry assembled from
+primitives, PBR materials, procedurally generated skin/fur/scale textures, a
+shadow-casting key light plus hemisphere fill and rim light, and fog. No model
+or image files ship; everything is generated at load time.
+
+`js/render.js` (the original Canvas 2D renderer) is kept and used automatically
+when WebGL is unavailable, and can be forced with `?2d` on the URL. Both expose
+the same interface — `render(engine, selectedLane, hoveredLane)`,
+`laneAtClientY(y)` and `resize()` — so game logic is untouched by the choice.
+three.js r160 is vendored under `vendor/` (MIT) rather than loaded from a CDN.
 
 ## Verification
 
