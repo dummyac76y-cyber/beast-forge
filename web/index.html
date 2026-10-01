@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Beast Forge — Web</title>
+<meta name="description" content="Browser port of the Beast Forge lane-defense strategy game. Kotlin/Compose reimplemented in vanilla JavaScript and Canvas 2D.">
+<meta name="theme-color" content="#0C0A10">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header id="topbar">
+    <div class="brand">
+      <span class="mark">⚒</span>
+      <span class="name">Beast&nbsp;Forge</span>
+    </div>
+    <nav id="nav">
+      <button data-screen="menu" class="on">Base</button>
+      <button data-screen="campaign">Campaign</button>
+      <button data-screen="arena">Arena</button>
+      <button data-screen="forge">Forge</button>
+      <button data-screen="armory">Armory</button>
+      <button data-screen="roster">Roster</button>
+    </nav>
+    <div class="right">
+      <span id="chips"></span>
+      <button id="soundBtn" title="Toggle sound">🔊</button>
+    </div>
+  </header>
+
+  <main id="screen"></main>
+
+  <script src="js/models.js"></script>
+  <script src="js/catalog.js"></script>
+  <script src="js/repo.js"></script>
+  <script src="js/engine.js"></script>
+  <script src="js/audio.js"></script>
+  <script src="js/render.js"></script>
+  <script src="js/ui.js"></script>
+</body>
+</html>
