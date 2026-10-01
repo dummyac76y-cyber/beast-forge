@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "_readme": [
+    "Optional asset manifest. Everything here is OPTIONAL -- delete this file",
+    "entirely and the game falls back to procedural vector art, synthesised",
+    "audio and the bundled web font, with no errors.",
+    "",
+    "Paths are relative to this assets/ directory.",
+    "",
+    "sprites.key naming convention used by the renderer:",
+    "  unit_biped | unit_quadruped | unit_dragon",
+    "  fort_player | fort_enemy",
+    "  bg_forest | bg_volcano | bg_snow | bg_citadel | bg_arena",
+    "",
+    "Sprite fields:",
+    "  file      required, image path",
+    "  frameW    draw width in virtual units (default: image width)",
+    "  frameH    draw height in virtual units (default: image height)",
+    "  anchorX   0..1 horizontal anchor within the frame (default 0.5)",
+    "  anchorY   0..1 vertical anchor, measured from the bottom (default 0.5)",
+    "  flipOnEnemy  mirror the sprite for enemy units (default true)",
+    "  cover     stretch-to-fill instead of letterbox, for backgrounds",
+    "",
+    "audio.key: use the same names the engine already fires -- select, button,",
+    "  coin, evolve, fire, ice, light, wind, earth, poison, biped_die,",
+    "  quad_die, dragon_die, fire_explode, fort_ruin, stage_start, victory,",
+    "  defeat.",
+    "",
+    "LICENSE: only add files you have the right to redistribute, and list the",
+    "author + license in CREDITS.md. CC0 / CC-BY / OFL are all fine."
+  ],
+
+  "fonts": [
+    { "family": "Cinzel", "file": "fonts/cinzel-latin-500-normal.woff2", "weight": 500 },
+    { "family": "Cinzel", "file": "fonts/cinzel-latin-600-normal.woff2", "weight": 600 },
+    { "family": "Cinzel", "file": "fonts/cinzel-latin-700-normal.woff2", "weight": 700 }
+  ],
+
+  "credits": [
+    {
+      "name": "Cinzel",
+      "author": "The Cinzel Project Authors",
+      "license": "SIL Open Font License 1.1",
+      "url": "https://github.com/NDISCOVER/Cinzel",
+      "note": "Display typeface. License text at assets/fonts/OFL.txt"
+    }
+  ],
+
+  "sprites": {},
+  "audio": {}
+}

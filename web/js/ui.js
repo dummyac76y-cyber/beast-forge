@@ -7,8 +7,11 @@
   const $ = s => document.querySelector(s);
   const el = (tag, cls, txt) => { const n = document.createElement(tag); if (cls) n.className = cls; if (txt != null) n.textContent = txt; return n; };
   const fmt = n => n.toLocaleString();
+  const esc = s => String(s).replace(/[&<>"]/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   let repo, audio, renderer, engine;
+  let assets = null;
   let screen = 'menu';
   let selectedCardId = null;
   let hoveredLane = -1;
@@ -19,14 +22,60 @@
   // ---------- boot ----------
   function boot() {
     repo = new GameRepository();
-    audio = new AudioMan();
+    // Defensive: the game is fully playable with no asset system at all.
+    assets = (typeof globalThis !== 'undefined' && globalThis.__beastForgeAssets) ||
+             (typeof AssetStore === 'function' ? new AssetStore() : null);
+    audio = new AudioMan(assets);
     audio.enabled = repo.profile.soundEnabled;
-    // No Renderer here: #battleCanvas does not exist until renderBattle() runs.
+
+    // Load optional assets first so fonts are ready before first paint. A missing
+    // or broken manifest resolves silently -- the game does not depend on it.
+    const ready = assets && typeof assets.load === 'function'
+      ? assets.load().catch(() => assets)
+      : Promise.resolve(assets);
 
     selectedCardId = repo.profile.deckCardIds[0] || null;
     wireGlobal();
     route('menu');
     window.addEventListener('resize', () => { if (renderer) renderer.resize(); });
+
+    ready.then(() => {
+      if (!assets) { console.info('[beast-forge] no asset system; using procedural art + synth audio'); return; }
+      document.documentElement.setAttribute('data-assets', assets.summary());
+      console.info('[beast-forge] assets:', assets.summary());
+      applyFontFamily();
+      renderCredits();
+      if (assets.stats.errors.length) {
+        console.warn('[beast-forge] asset load issues:', assets.stats.errors);
+      }
+      renderProfileChips();
+    });
+  }
+
+  // The display face comes from the manifest when present; otherwise the CSS
+  // stack below falls back to a serif.
+  function applyFontFamily() {
+    const hasDisplay = !!(assets && assets.hasFonts && assets.hasFonts());
+    document.documentElement.classList.toggle('has-display-font', hasDisplay);
+  }
+
+  // Only shown when the manifest actually contributed third-party assets.
+  // Attribution stays attached to the thing it credits.
+  function renderCredits() {
+    const host = $('#credits');
+    if (!host) return;
+    const src = (assets && assets.sources) || [];
+    if (!src.length) { host.innerHTML = ''; host.style.display = 'none'; return; }
+    const parts = src.map(c => {
+      const who = c.author || c.name;
+      const lic = c.license ? ' (' + c.license + ')' : '';
+      return c.url
+        ? '<a href="' + c.url + '" target="_blank" rel="noopener">' + esc(who) + '</a>' + esc(lic)
+        : esc(who) + esc(lic);
+    });
+    host.style.display = 'block';
+    host.innerHTML = 'Assets: ' + parts.join(' · ') +
+      ' — see <a href="CREDITS.md">CREDITS.md</a>. Everything else is generated procedurally.';
   }
 
   function wireGlobal() {
@@ -187,7 +236,7 @@
     tip.id = 'tip';
     host.appendChild(tip);
 
-    renderer = new Renderer(cv);
+    renderer = new Renderer(cv, assets);
     cv.addEventListener('mousemove', e => { hoveredLane = renderer.laneAtClientY(e.clientY); });
     cv.addEventListener('mouseleave', () => { hoveredLane = -1; });
     cv.addEventListener('click', e => {

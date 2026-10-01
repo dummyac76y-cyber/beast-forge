@@ -33,10 +33,11 @@ const CUES = {
 };
 
 class AudioMan {
-  constructor() {
+  constructor(assets) {
     this.ctx = null;
     this.enabled = true;
     this.lastPlay = {};       // per-key throttle
+    this.assets = assets || (typeof globalThis !== 'undefined' ? globalThis.__beastForgeAssets : null);
   }
 
   // Browsers require a user gesture before audio starts.
@@ -46,14 +47,38 @@ class AudioMan {
     if (AC) this.ctx = new AC();
   }
 
+  /** Play a decoded sample from the manifest, if one was supplied. */
+  _playSample(clip, volume) {
+    if (!this.ctx || !clip || !clip.buffer) return false;
+    try {
+      const src = this.ctx.createBufferSource();
+      const gain = this.ctx.createGain();
+      src.buffer = clip.buffer;
+      const v = (volume === undefined ? 0.8 : volume) * (clip.volume !== undefined ? clip.volume : 0.8);
+      gain.gain.value = v;
+      src.connect(gain); gain.connect(this.ctx.destination);
+      src.start();
+      return true;
+    } catch (e) {
+      return false;   // fall through to synthesis
+    }
+  }
+
   play(key, volume) {
     if (!this.enabled || !this.ctx) return;
-    const cue = CUES[key];
-    if (!cue) return;
     const now = this.ctx.currentTime;
     if (this.lastPlay[key] && now - this.lastPlay[key] < 0.035) return;  // avoid machine-gunning
     this.lastPlay[key] = now;
 
+    // Real sample wins when the manifest provided one; otherwise synthesise.
+    let clip = null;
+    if (this.assets && typeof this.assets.audioClip === 'function') {
+      try { clip = this.assets.audioClip(key); } catch (e) { clip = null; }
+    }
+    if (clip && this._playSample(clip, volume)) return;
+
+    const cue = CUES[key];
+    if (!cue) return;
     const [wave, f0, f1, dur, peak] = cue;
     const vol = (volume === undefined ? 0.8 : volume) * peak;
     const osc = this.ctx.createOscillator();

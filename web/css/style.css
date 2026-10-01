@@ -1,4 +1,20 @@
+/* Display face. Cinzel (SIL OFL 1.1) is loaded via assets/manifest.json and
+   injected as a FontFace at runtime -- see js/assets.js and CREDITS.md.
+   These static rules are the fallback if no manifest is present. */
+@font-face{
+  font-family:'Cinzel';font-style:normal;font-weight:500;font-display:swap;
+  src:url('../assets/fonts/cinzel-latin-500-normal.woff2') format('woff2');
+}
+@font-face{
+  font-family:'Cinzel';font-style:normal;font-weight:600;font-display:swap;
+  src:url('../assets/fonts/cinzel-latin-600-normal.woff2') format('woff2');
+}
+@font-face{
+  font-family:'Cinzel';font-style:normal;font-weight:700;font-display:swap;
+  src:url('../assets/fonts/cinzel-latin-700-normal.woff2') format('woff2');
+}
 :root{
+  --display:'Cinzel',ui-serif,Georgia,'Times New Roman',serif;
   --bg:#0C0A10; --surface:#16131F; --surface2:#221C30; --line:#33294a;
   --fg:#EDE7F6; --dim:#9b90b3; --gold:#FFB300; --gold2:#FFD54F;
   --amber:#FF9800; --red:#E64A19; --blue:#0288D1; --ok:#4CAF50; --bad:#FF5252;
@@ -173,3 +189,19 @@ button.ghost:hover:not(:disabled){border-color:var(--dim)}
   .right{width:100%;margin-left:0}
   #nav{order:3;width:100%}
 }
+/* ---------- display type ---------- */
+.brand .name,.hero h2,.big .t,.modal h2,.stage .nm,.bcard .bn,.pack .bn{
+  font-family:var(--display);
+  font-weight:600;
+  letter-spacing:.01em;
+}
+.modal h2{font-size:34px;letter-spacing:.04em;text-transform:uppercase}
+.big .t{letter-spacing:.03em}
+h3{font-family:var(--display);letter-spacing:.03em;text-transform:uppercase;font-size:12.5px;color:var(--dim)}
+
+/* Attribution line, shown only when the manifest supplied third-party assets. */
+#credits{
+  margin-top:28px;padding-top:14px;border-top:1px solid var(--line);
+  font-size:11.5px;color:#6f678a;font-family:var(--mono);line-height:1.7;
+}
+#credits a{color:#8f86ad}

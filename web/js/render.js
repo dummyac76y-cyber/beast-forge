@@ -21,11 +21,31 @@ const THEMES = {
 };
 
 class Renderer {
-  constructor(canvas) {
+  constructor(canvas, assets) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
+    this.assets = assets || (typeof globalThis !== 'undefined' ? globalThis.__beastForgeAssets : null);
     this.scaleX = 1; this.scaleY = 1;
     this.resize();
+  }
+
+  // Returns a loaded sprite entry, or null. Null is the normal case and means
+  // "draw the procedural version instead".
+  sprite(kind, arg) {
+    if (!this.assets || typeof this.assets.sprite !== 'function') return null;
+    try { return this.assets.sprite(kind, arg); } catch (e) { return null; }
+  }
+
+  // Blit a sprite centred on (x,y) in virtual space, optionally mirrored.
+  drawSprite(spec, x, y, w, h, mirror) {
+    const { ctx } = this;
+    const px = x * this.scaleX, py = y * this.scaleY;
+    const pw = w * this.scaleX, ph = h * this.scaleY;
+    ctx.save();
+    ctx.translate(px, py);
+    if (mirror) ctx.scale(-1, 1);
+    ctx.drawImage(spec.img, -pw * spec.anchorX, -ph * spec.anchorY, pw, ph);
+    ctx.restore();
   }
 
   resize() {
@@ -53,6 +73,23 @@ class Renderer {
   drawBackground(themeKey) {
     const t = THEMES[themeKey] || THEMES.forest;
     const { ctx } = this;
+
+    // Full-bleed painted background wins if the manifest supplies one.
+    const bg = this.sprite('bg_' + themeKey);
+    if (bg) {
+      if (bg.cover) {
+        const sr = bg.img.naturalWidth / bg.img.naturalHeight;
+        const dr = this.cssW / this.cssH;
+        let sw = bg.img.naturalWidth, sh = bg.img.naturalHeight, sx = 0, sy = 0;
+        if (sr > dr) { sw = sh * dr; sx = (bg.img.naturalWidth - sw) / 2; }
+        else        { sh = sw / dr; sy = (bg.img.naturalHeight - sh) / 2; }
+        ctx.drawImage(bg.img, sx, sy, sw, sh, 0, 0, this.cssW, this.cssH);
+      } else {
+        ctx.drawImage(bg.img, 0, 0, this.cssW, this.cssH);
+      }
+      return;
+    }
+
     const g = ctx.createLinearGradient(0, 0, 0, this.cssH);
     g.addColorStop(0, t.sky[0]); g.addColorStop(0.55, t.sky[1]); g.addColorStop(1, t.sky[2]);
     ctx.fillStyle = g;
@@ -102,6 +139,21 @@ class Renderer {
     const h = (5 * LANE_HEIGHT + 16) * this.scaleY;
     const frac = Math.max(0, fort.currentHp / fort.maxHp);
 
+    // Painted fort sprite wins when supplied.
+    const spec = this.sprite('fort_' + (isPlayer ? 'player' : 'enemy'));
+    if (spec) {
+      this.drawSprite(spec, isPlayer ? 60 : 940,
+        (LANE_START + 2.5 * LANE_HEIGHT) * this.scaleY / this.scaleY,
+        Math.max(spec.frameW || 120, 120), (5 * LANE_HEIGHT) || 300, !isPlayer);
+      const bw = 60 * this.scaleX, bh = 6 * this.scaleY;
+      const bx = (isPlayer ? 60 : 940) * this.scaleX - bw / 2;
+      const by = (LANE_START - 16) * this.scaleY;
+      ctx.fillStyle = 'rgba(0,0,0,0.65)'; ctx.fillRect(bx, by, bw, bh);
+      ctx.fillStyle = frac > 0.35 ? (isPlayer ? '#4CAF50' : '#FF5252') : '#FF1744';
+      ctx.fillRect(bx, by, bw * frac, bh);
+      return;
+    }
+
     // Curtain wall.
     ctx.fillStyle = isPlayer ? '#3A3F4B' : '#4A3038';
     ctx.fillRect(x - w / 2, y0, w, h);
@@ -132,6 +184,20 @@ class Renderer {
     const hpFrac = Math.max(0, u.currentHp / u.maxHp);
     const bob = u.state === 'MARCHING' ? Math.sin(performance.now() / 90 + u.laneIndex) * 2 : 0;
     const r = 15 * s;
+
+    // Painted unit sprite wins when supplied; element aura is still drawn so the
+    // player can read affinity at a glance regardless of art source.
+    const spec = this.sprite('unit_' + String(u.race).toLowerCase());
+    if (spec) {
+      const aura = ctx.createRadialGradient(x, y, 2, x, y, r * 2.1);
+      aura.addColorStop(0, col + '33'); aura.addColorStop(1, col + '00');
+      ctx.fillStyle = aura;
+      ctx.beginPath(); ctx.arc(x, y, r * 2.1, 0, Math.PI * 2); ctx.fill();
+      this.drawSprite(spec, x, y + bob, spec.frameW || r * 3, spec.frameH || r * 3,
+        spec.flipOnEnemy ? !u.isPlayer : false);
+      this.drawUnitBars(u, x, y, r, bob);
+      return;
+    }
 
     ctx.save();
     ctx.translate(x, y + bob);
@@ -191,13 +257,20 @@ class Renderer {
       ctx.restore();
     }
 
-    // HP bar + tier pip.
+    // HP bar + tier pip, shared by the sprite and vector paths.
+    this.drawUnitBars(u, x, y, r, bob);
+  }
+
+  drawUnitBars(u, x, y, r, bob) {
+    const { ctx } = this;
+    const hpFrac = Math.max(0, u.currentHp / u.maxHp);
     const bw = 26 * this.scaleX, bh = 3.5 * this.scaleY;
-    ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(x - bw / 2, y - r * 1.75, bw, bh);
+    const by = y - r * 1.75 - (bob || 0);
+    ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(x - bw / 2, by, bw, bh);
     ctx.fillStyle = u.isPlayer ? '#66BB6A' : '#EF5350';
-    ctx.fillRect(x - bw / 2, y - r * 1.75, bw * hpFrac, bh);
+    ctx.fillRect(x - bw / 2, by, bw * hpFrac, bh);
     ctx.fillStyle = M.TIER[u.tier].color;
-    ctx.fillRect(x - bw / 2 - 5 * this.scaleX, y - r * 1.75, 2.5 * this.scaleX, bh);
+    ctx.fillRect(x - bw / 2 - 5 * this.scaleX, by, 2.5 * this.scaleX, bh);
   }
 
   laneY(laneIndex) { return (LANE_START + laneIndex * LANE_HEIGHT + LANE_HEIGHT * 0.5) * this.scaleY; }
