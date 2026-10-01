@@ -1,0 +1,7 @@
+# Local APK analysis tooling and intermediate dumps.
+# The extracted APK tree under extract/ IS tracked; these are not.
+axml.py
+dex.py
+classes.txt
+dexstrings.txt
+manifest.xml
