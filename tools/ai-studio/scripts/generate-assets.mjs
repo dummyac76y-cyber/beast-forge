@@ -17,8 +17,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { SPRITES, BACKGROUNDS, AUDIO, CREDITS, THEMES } from './lib/spec.mjs';
-import { drawUnitBiped, drawUnitQuadruped, drawUnitDragon, drawFort, drawBackground } from './lib/art.mjs';
+import { SPRITES, BACKGROUNDS, AUDIO, TEXTURES, CREDITS, THEMES } from './lib/spec.mjs';
+import { drawUnitBiped, drawUnitQuadruped, drawUnitDragon, drawFort, drawBackground, drawTilingTexture } from './lib/art.mjs';
 import { encodeWAV, SAMPLE_RATE } from './lib/wav.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -119,6 +119,11 @@ function generate() {
     write(path.join(STAGE_SPRITES, BACKGROUNDS[key].file), drawBackground(theme).toPNG());
   }
 
+  // Seamless detail maps for the WebGL renderer.
+  for (const [key, spec] of Object.entries(TEXTURES)) {
+    write(path.join(STAGE_SPRITES, spec.file), drawTilingTexture(spec.kind, spec.seed).toPNG());
+  }
+
   for (const [key, spec] of Object.entries(AUDIO)) {
     write(path.join(STAGE_AUDIO, spec.file), encodeWAV(renderCue(spec, key)));
   }
@@ -127,15 +132,36 @@ function generate() {
 function promote() {
   const entries = [...Object.entries(SPRITES), ...Object.entries(BACKGROUNDS)];
   const spriteManifest = {};
+  const textureManifest = {};
+
+  /**
+   * Copy one staged file into web/assets.
+   *
+   * Generation is deterministic, so re-promoting an unchanged asset produces
+   * byte-identical output. That case is a no-op rather than an error, which
+   * makes `assets && assets:promote` safe to re-run. A genuine content change
+   * to an existing game asset still requires --force.
+   */
+  const promoteFile = (stageDir, rel, label) => {
+    const src = path.join(stageDir, rel);
+    if (!fs.existsSync(src)) throw new Error(`missing staged ${label}: ${rel}`);
+    const dst = path.join(GAME_ASSETS, rel);
+    const bytes = fs.readFileSync(src);
+    if (fs.existsSync(dst) && !FORCE) {
+      if (fs.readFileSync(dst).equals(bytes)) return false;   // already current
+      throw new Error(
+        `refusing to replace existing game asset ${rel} with different content ` +
+        '(re-run with --force if the change is intentional)'
+      );
+    }
+    write(dst, bytes);
+    return true;
+  };
+
+  const promoteImage = rel => promoteFile(STAGE_SPRITES, rel, 'image');
 
   for (const [key, spec] of entries) {
-    const src = path.join(STAGE_SPRITES, spec.file);
-    if (!fs.existsSync(src)) throw new Error(`missing staged sprite: ${src}`);
-    const dst = path.join(GAME_ASSETS, spec.file);
-    if (fs.existsSync(dst) && !FORCE) {
-      throw new Error(`refusing to overwrite existing game asset ${dst} (pass --force to replace)`);
-    }
-    write(dst, fs.readFileSync(src));
+    promoteImage(spec.file);
     spriteManifest[key] = {
       file: spec.file,
       frameW: spec.frameW,
@@ -147,15 +173,16 @@ function promote() {
     };
   }
 
+  // Tileable detail maps live in their own manifest section -- the 3D renderer
+  // looks them up as textures, not as sprites.
+  for (const [key, spec] of Object.entries(TEXTURES)) {
+    promoteImage(spec.file);
+    textureManifest[key] = { file: spec.file, repeat: spec.repeat };
+  }
+
   const audioManifest = {};
   for (const [key, spec] of Object.entries(AUDIO)) {
-    const src = path.join(STAGE_AUDIO, spec.file);
-    if (!fs.existsSync(src)) throw new Error(`missing staged clip: ${src}`);
-    const dst = path.join(GAME_ASSETS, spec.file);
-    if (fs.existsSync(dst) && !FORCE) {
-      throw new Error(`refusing to overwrite existing game asset ${dst} (pass --force to replace)`);
-    }
-    write(dst, fs.readFileSync(src));
+    promoteFile(STAGE_AUDIO, spec.file, 'clip');
     audioManifest[key] = { file: spec.file, volume: spec.volume };
   }
 
@@ -166,7 +193,7 @@ function promote() {
   let existing = {};
   if (fs.existsSync(manifestPath)) {
     existing = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-    for (const [section, next] of [['sprites', spriteManifest], ['audio', audioManifest]]) {
+    for (const [section, next] of [['sprites', spriteManifest], ['audio', audioManifest], ['textures', textureManifest]]) {
       for (const [key, spec] of Object.entries(existing[section] || {})) {
         if (next[key] && next[key].file !== spec.file && !FORCE) {
           throw new Error(
@@ -184,6 +211,7 @@ function promote() {
     generatedBy: 'tools/ai-studio/scripts/generate-assets.mjs',
     sprites: { ...(existing.sprites || {}), ...spriteManifest },
     audio: { ...(existing.audio || {}), ...audioManifest },
+    textures: { ...(existing.textures || {}), ...textureManifest },
     fonts: existing.fonts && existing.fonts.length ? existing.fonts : [
       { family: 'Cinzel', file: 'fonts/cinzel-latin-500-normal.woff2', weight: 500 },
       { family: 'Cinzel', file: 'fonts/cinzel-latin-600-normal.woff2', weight: 600 },
@@ -193,7 +221,11 @@ function promote() {
   };
   write(manifestPath, Buffer.from(JSON.stringify(manifest, null, 2) + '\n'));
 
-  return { sprites: Object.keys(manifest.sprites).length, audio: Object.keys(manifest.audio).length };
+  return {
+    sprites: Object.keys(manifest.sprites).length,
+    audio: Object.keys(manifest.audio).length,
+    textures: Object.keys(manifest.textures).length
+  };
 }
 
 /**
@@ -212,7 +244,7 @@ function mergeCredits(existing, incoming) {
 // --------------------------------------------------------------------- main
 if (PROMOTE) {
   const n = promote();
-  console.log(`promoted ${n.sprites} sprites + ${n.audio} clips + manifest.json -> web/assets`);
+  console.log(`promoted ${n.sprites} sprites + ${n.audio} clips + ${n.textures} textures + manifest.json -> web/assets`);
 } else {
   generate();
 }

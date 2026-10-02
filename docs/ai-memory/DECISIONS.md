@@ -112,21 +112,47 @@ no behaviour other than the crash.
 
 ---
 
-## D6 — Leave `render3d.js` alone
+## D6 — Give the WebGL renderer tiling maps, not character sprites
+
+**Date:** 2026-10-02 · **Supersedes the "leave render3d.js alone" stance in D6 of the first pass**
+
+`render3d.js` never read the manifest, so generated sprites were invisible on the
+default WebGL path. Two ways to close that:
+
+**(a) texture the 3D beasts with the character sprites.** Rejected. The renderer
+builds geometry from primitives — a capsule, a cone, a sphere — and animates
+them with walk cycles. A flat 2D creature image wrapped onto a capsule would look
+worse than the procedural material it replaced, and would not animate. The art
+and the renderer disagree about what a unit *is*.
+
+**(b) give the 3D path the kind of art it can actually use.** Chosen.
+
+- Painted `bg_<theme>` art → `scene.background`, cover-fitted.
+- New seamless tiling maps → `roughnessMap` + `bumpMap`.
+
+**Why not `map` for the tiling maps:** `MeshStandardMaterial` multiplies
+`map × color`. A tiling albedo would darken every per-element palette by its mean
+value and shift hues — a silent regression in the thing the palette exists to
+communicate. `roughnessMap` and `bumpMap` vary the surface *response to light*
+without touching colour or brightness, which is exactly what "make it look less
+flat" needs. Every lookup is optional and falls back to the previous procedural
+behaviour, asserted in QA by aborting all asset requests on both renderers.
+
+## D6b — Make promote idempotent instead of erroring on identical bytes
 
 **Date:** 2026-10-02
 
-`render3d.js` never reads the manifest, so generated sprites are invisible on the
-default WebGL path. Wiring textures into the 3D meshes would fix that, but it is
-a renderer change — architecture-level work the skill says to ask about first,
-and not something to smuggle into an asset commit.
+The first promote guard refused to write *any* existing file without `--force`,
+which made the documented workflow `assets && assets:promote` fail on the second
+run even though generation is deterministic and the output was byte-identical.
 
-**Instead:** documented in README, `CODE_ARCHITECTURE.md` and `ASSET_REGISTRY.md`,
-and the QA suite *reports* the sprite-draw count per renderer rather than
-asserting art everywhere, so the gap is visible instead of hidden.
+Now a file whose staged bytes equal the committed bytes is a silent no-op, and
+only a genuine content difference requires `--force`. Protection is unchanged where
+it matters — you still cannot accidentally replace a real game asset, but
+re-promoting unchanged art is no longer a papercut.
 
-Note the game prefers WebGL and silently falls back to Canvas 2D when WebGL is
-unavailable, so the art path is reachable for real users too.
+Verified: two consecutive generations produced 31/31 byte-identical files, and
+every already-promoted asset matched its regenerated counterpart exactly.
 
 ---
 

@@ -17,7 +17,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
-import { readPNGHeader } from './lib/png.mjs';
+import { readPNGHeader, decodePNG } from './lib/png.mjs';
 import { readWAVHeader } from './lib/wav.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -32,6 +32,25 @@ const fail = (msg) => { failures++; console.log('  FAIL ' + msg); };
 const head = (msg) => console.log('\n' + msg + '\n' + '-'.repeat(msg.length));
 
 const read = p => fs.readFileSync(p, 'utf8');
+
+/**
+ * A tiling map must not show a seam where it repeats, so compare the difference
+ * across the wrap edge against the typical difference between neighbouring
+ * interior pixels along the same axis. A seam shows up as a wrap delta far above
+ * the interior baseline.
+ */
+function checkSeamless(buf, header) {
+  const { width: w, height: h, data } = decodePNG(buf);
+  const px = (x, y) => data[(y * w + x) * 4];
+  let wrapX = 0, wrapY = 0, baseX = 0, baseY = 0;
+  const mx = Math.min(w, 256), my = Math.min(h, 256);
+  for (let y = 0; y < my; y++) wrapX += Math.abs(px(0, y) - px(w - 1, y));
+  for (let x = 0; x < mx; x++) wrapY += Math.abs(px(x, 0) - px(x, h - 1));
+  const bx = Math.min(w - 1, 100), by = Math.min(h - 1, 100);
+  for (let y = 0; y < my; y++) baseX += Math.abs(px(bx, y) - px(bx + 1, y));
+  for (let x = 0; x < mx; x++) baseY += Math.abs(px(x, by) - px(x, by + 1));
+  return { wrapX: wrapX / my, wrapY: wrapY / mx, baseX: baseX / my, baseY: baseY / my, header };
+}
 const JS_FILES = ['render.js', 'render3d.js', 'ui.js', 'engine.js', 'audio.js', 'assets.js', 'models.js', 'catalog.js']
   .map(f => ({ f, src: read(path.join(JS, f)) }));
 
@@ -116,6 +135,22 @@ if (fs.existsSync(manifestPath)) {
   for (const fnt of m.fonts || []) {
     const f = path.join(WEB, 'assets', fnt.file);
     fs.existsSync(f) ? ok(`font ${fnt.family} ${fnt.weight}`) : fail(`font ${fnt.file} missing`);
+  }
+  for (const [key, t] of Object.entries(m.textures || {})) {
+    const f = path.join(WEB, 'assets', t.file);
+    if (!fs.existsSync(f)) { fail(`texture ${key}: ${t.file} missing`); continue; }
+    const buf = fs.readFileSync(f);
+    bytes += buf.length;
+    const h = readPNGHeader(buf);
+    if (!h) { fail(`texture ${key}: ${t.file} is not a valid PNG`); continue; }
+    // Tiling maps must actually tile, or the 3D renderer shows visible seams.
+    const seam = checkSeamless(buf, h);
+    if (seam.wrapX > seam.baseX * 2.5 || seam.wrapY > seam.baseY * 2.5) {
+      fail(`texture ${key}: does not tile (wrapX ${seam.wrapX.toFixed(2)} vs interior ${seam.baseX.toFixed(2)}, ` +
+           `wrapY ${seam.wrapY.toFixed(2)} vs interior ${seam.baseY.toFixed(2)})`);
+    } else {
+      ok(`texture ${key} ${h.width}x${h.height} tiles seamlessly`);
+    }
   }
   console.log(`  ${(bytes / 1024).toFixed(1)} KiB of binary assets`);
 

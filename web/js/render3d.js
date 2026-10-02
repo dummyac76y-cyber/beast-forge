@@ -8,6 +8,12 @@
 //
 // Loaded as an ES module (it imports three.js). ui.js falls back to the 2D
 // canvas renderer when WebGL is unavailable.
+//
+// Optional assets (passed in by ui.js as an AssetStore) are used when present:
+//   bg_<theme>   painted sky, used as the scene background
+//   tex_fur / tex_scale / tex_stone   seamless surface maps
+// Every one of them is optional. With no manifest at all the renderer behaves
+// exactly as it did before: procedural CanvasTextures and a flat sky colour.
 import * as THREE from '../vendor/three.module.js';
 
 // ---------------------------------------------------------------- world setup
@@ -122,6 +128,56 @@ function cachedSkin(kind, baseHex, accentHex, seed) {
   return texCache.get(key);
 }
 
+// --------------------------------------------------------------- asset bridge
+// ui.js hands the shared AssetStore in once, at renderer creation. Null means
+// "no manifest", and every lookup below degrades to the procedural generator.
+let assets = null;
+const assetTexCache = new Map();
+
+function setAssetStore(store) {
+  assets = (store && typeof store.texture === 'function') ? store : null;
+  // Release GPU textures tied to the previous store; the HTMLImageElements they
+  // wrap may be about to go away.
+  for (const t of assetTexCache.values()) t.dispose();
+  assetTexCache.clear();
+  texCache.clear();
+}
+
+/** Texture kind -> manifest key for the seamless detail maps. */
+const DETAIL_KEYS = { fur: 'tex_fur', scale: 'tex_scale', plate: 'tex_stone' };
+
+/**
+ * Manifest tiling map for a surface kind, or null when there is none.
+ *
+ * Deliberately used as roughnessMap + bumpMap and never as `map`: an albedo map
+ * multiplies into the material colour and would darken the per-element palette,
+ * whereas roughness/bump variation adds real surface interest under the existing
+ * lighting while leaving colour and brightness untouched.
+ */
+function detailMap(kind) {
+  if (!assets) return null;
+  const key = DETAIL_KEYS[kind];
+  if (!key) return null;
+  if (assetTexCache.has(key)) return assetTexCache.get(key);
+  let entry = null;
+  try { entry = assets.texture(key); } catch (e) { entry = null; }
+  if (!entry || !entry.img) return null;
+  const tex = new THREE.Texture(entry.img);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.setScalar(entry.repeat || 2);
+  tex.anisotropy = 4;
+  tex.needsUpdate = true;
+  assetTexCache.set(key, tex);
+  return tex;
+}
+
+/** Convenience: attach the optional detail maps to a MeshStandardMaterial. */
+function withDetail(mat, kind, bumpScale) {
+  const d = detailMap(kind);
+  if (d) { mat.roughnessMap = d; mat.bumpMap = d; mat.bumpScale = bumpScale; }
+  return mat;
+}
+
 // Soft round blob used for ground shadows and impact flashes.
 function radialTexture(inner, outer) {
   const S = 64;
@@ -140,12 +196,12 @@ function radialTexture(inner, outer) {
 // animation pass (legs, wings, arms, head) so walk cycles can drive them.
 function buildBiped(palette) {
   const g = new THREE.Group();
-  const mat = new THREE.MeshStandardMaterial({
+  const mat = withDetail(new THREE.MeshStandardMaterial({
     map: cachedSkin('fur', palette.base, palette.accent, 3), roughness: 0.85, metalness: 0.02,
-  });
-  const dark = new THREE.MeshStandardMaterial({
+  }), 'fur', 0.022);
+  const dark = withDetail(new THREE.MeshStandardMaterial({
     map: cachedSkin('fur', palette.shade, palette.base, 8), roughness: 0.9,
-  });
+  }), 'fur', 0.022);
 
   const hips = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.34, 0.46), mat);
   hips.position.y = 1.02; hips.castShadow = true; g.add(hips);
@@ -203,12 +259,12 @@ function buildBiped(palette) {
 
 function buildQuadruped(palette) {
   const g = new THREE.Group();
-  const mat = new THREE.MeshStandardMaterial({
+  const mat = withDetail(new THREE.MeshStandardMaterial({
     map: cachedSkin('fur', palette.base, palette.accent, 21), roughness: 0.88,
-  });
-  const dark = new THREE.MeshStandardMaterial({
+  }), 'fur', 0.026);
+  const dark = withDetail(new THREE.MeshStandardMaterial({
     map: cachedSkin('fur', palette.shade, palette.base, 27), roughness: 0.92,
-  });
+  }), 'fur', 0.026);
 
   const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.44, 0.92, 4, 12), mat);
   body.rotation.z = Math.PI / 2;            // capsule is Y-up; lay it along X
@@ -263,12 +319,12 @@ function buildQuadruped(palette) {
 
 function buildDragon(palette) {
   const g = new THREE.Group();
-  const mat = new THREE.MeshStandardMaterial({
+  const mat = withDetail(new THREE.MeshStandardMaterial({
     map: cachedSkin('scale', palette.base, palette.accent, 55), roughness: 0.62, metalness: 0.08,
-  });
-  const dark = new THREE.MeshStandardMaterial({
+  }), 'scale', 0.03);
+  const dark = withDetail(new THREE.MeshStandardMaterial({
     map: cachedSkin('scale', palette.shade, palette.base, 61), roughness: 0.7,
-  });
+  }), 'scale', 0.03);
 
   const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.46, 1.05, 4, 12), mat);
   body.rotation.z = Math.PI / 2; body.position.y = 1.55; body.castShadow = true; g.add(body);
@@ -391,10 +447,10 @@ function buildTerrain(themeKey) {
   const T = THEMES[themeKey] || THEMES.forest;
   const grp = new THREE.Group();
 
-  const groundMat = new THREE.MeshStandardMaterial({
+  const groundMat = withDetail(new THREE.MeshStandardMaterial({
     map: cachedSkin('plate', shadeOf(T.ground, 1.15), shadeOf(T.ground, 0.7), 7),
     roughness: 0.97, metalness: 0,
-  });
+  }), 'plate', 0.05);
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(160, 90), groundMat);
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
@@ -402,10 +458,10 @@ function buildTerrain(themeKey) {
 
   // Lane strips, slightly raised and tinted, with kerbs so the five deployment
   // lanes read clearly from the game camera.
-  const laneMat = new THREE.MeshStandardMaterial({
+  const laneMat = withDetail(new THREE.MeshStandardMaterial({
     map: cachedSkin('plate', shadeOf(T.lane, 1.1), shadeOf(T.lane, 0.72), 13),
     roughness: 0.9,
-  });
+  }), 'plate', 0.03);
   const kerbMat = new THREE.MeshStandardMaterial({ color: shadeOf(T.lane, 0.55), roughness: 0.8 });
   const lanes = [];
   for (let i = 0; i < LANE_COUNT; i++) {
@@ -423,10 +479,10 @@ function buildTerrain(themeKey) {
   }
 
   // Perimeter rocks so the field does not end in empty void.
-  const rockMat = new THREE.MeshStandardMaterial({
+  const rockMat = withDetail(new THREE.MeshStandardMaterial({
     map: cachedSkin('plate', shadeOf(T.ground, 0.8), shadeOf(T.ground, 0.45), 29),
     roughness: 1.0,
-  });
+  }), 'plate', 0.04);
   for (let i = 0; i < 46; i++) {
     const a = hash2(i, 3, 5) * Math.PI * 2;
     const rad = 40 + hash2(i, 9, 11) * 30;
@@ -444,9 +500,9 @@ function buildTerrain(themeKey) {
 // --------------------------------------------------------------------- fort
 function buildFort(palette, isPlayer) {
   const g = new THREE.Group();
-  const stone = new THREE.MeshStandardMaterial({
+  const stone = withDetail(new THREE.MeshStandardMaterial({
     map: cachedSkin('plate', palette.base, palette.shade, 37), roughness: 0.92, metalness: 0.03,
-  });
+  }), 'plate', 0.035);
   const trim = new THREE.MeshStandardMaterial({ color: palette.metal, roughness: 0.4, metalness: 0.65 });
   const bannerMat = new THREE.MeshStandardMaterial({
     color: palette.glow, roughness: 0.7, side: THREE.DoubleSide,
@@ -534,6 +590,7 @@ if (typeof globalThis !== 'undefined') {
 
 function createRenderer3D(canvas, opts) {
   const opts2 = opts || {};
+  setAssetStore(opts2.assets);
   const renderer = new THREE.WebGLRenderer({
     canvas, antialias: true, alpha: false, powerPreference: 'high-performance',
     // Allows an offscreen harness to supply an existing context; browsers omit it.
@@ -568,6 +625,7 @@ function createRenderer3D(canvas, opts) {
   scene.add(rim);
 
   let terrainGroup = null, themeKey = null;
+  let skyTex = null;          // manifest background for the current theme
   const raycaster = new THREE.Raycaster();
   // Invisible quads used only for picking a lane from a pointer position.
   const pickMat = new THREE.MeshBasicMaterial({ visible: false });
@@ -586,6 +644,33 @@ function createRenderer3D(canvas, opts) {
   const blobTex = radialTexture('rgba(0,0,0,0.5)', 'rgba(0,0,0,0)');
   const flashTex = radialTexture('rgba(255,255,255,0.95)', 'rgba(255,255,255,0)');
 
+  /**
+   * Cover-fit a background image to the current viewport, matching what
+   * render.js does for the 2D path (it letterboxes unless cover is set). Three
+   * draws a scene.background texture across the full NDC quad honouring
+   * repeat/offset, so cropping is just a matter of scaling past the edges.
+   */
+  function fitBackground() {
+    if (!skyTex || !skyTex.userData || !skyTex.userData.el) return;
+    const el = skyTex.userData.el;
+    const w = canvas.clientWidth || canvas.width || 1000;
+    const h = canvas.clientHeight || canvas.height || 450;
+    const imgAspect = (el.naturalWidth || el.width) / (el.naturalHeight || el.height || 1);
+    if (!isFinite(imgAspect) || imgAspect <= 0) return;
+    const viewAspect = w / h;
+    if (imgAspect > viewAspect) {
+      // Image is wider than the view: crop left/right.
+      const s = imgAspect / viewAspect;
+      skyTex.repeat.set(1 / s, 1);
+      skyTex.offset.set((1 - 1 / s) / 2, 0);
+    } else {
+      // Image is taller: crop top/bottom, biased upward to keep the horizon.
+      const s = viewAspect / imgAspect;
+      skyTex.repeat.set(1, 1 / s);
+      skyTex.offset.set(0, (1 - 1 / s) * 0.62);
+    }
+  }
+
   function setTheme(k) {
     if (k === themeKey) return;
     themeKey = k;
@@ -593,7 +678,24 @@ function createRenderer3D(canvas, opts) {
     terrainGroup = buildTerrain(k);
     scene.add(terrainGroup);
     const T = THEMES[k] || THEMES.forest;
-    scene.background = new THREE.Color(T.sky);
+
+    // Prefer the painted background from the asset manifest; fall back to the
+    // flat theme colour when there is no manifest or no image for this theme.
+    let entry = null;
+    if (assets) { try { entry = assets.sprite('bg_' + k); } catch (e) { entry = null; } }
+    if (skyTex) { skyTex.dispose(); skyTex = null; }
+    if (entry && entry.img) {
+      skyTex = new THREE.Texture(entry.img);
+      skyTex.colorSpace = THREE.SRGBColorSpace;
+      skyTex.wrapS = skyTex.wrapT = THREE.ClampToEdgeWrapping;
+      skyTex.userData = { el: entry.img };
+      skyTex.needsUpdate = true;
+      scene.background = skyTex;
+    } else {
+      scene.background = new THREE.Color(T.sky);
+    }
+    fitBackground();
+
     scene.fog = new THREE.Fog(T.fog, 70, 185);
     key.color.setHex(T.sun);
   }
@@ -766,6 +868,9 @@ function createRenderer3D(canvas, opts) {
       need / (2 * Math.tan((camera.fov * Math.PI / 180) / 2) * camera.aspect) * 0.66);
     camera.lookAt(CAM_TARGET);
     camera.updateProjectionMatrix();
+    // The painted background is cover-fitted, so it has to be re-fitted whenever
+    // the viewport changes shape.
+    fitBackground();
   }
 
   function highlightLanes(selected, hovered) {
@@ -817,7 +922,12 @@ function createRenderer3D(canvas, opts) {
     renderer.render(scene, camera);
   }
 
-  function dispose() { disposeTree(scene); renderer.dispose(); }
+  function dispose() {
+    if (skyTex) { skyTex.dispose(); skyTex = null; }
+    scene.background = null;
+    disposeTree(scene);
+    renderer.dispose();
+  }
 
   return { render: render3D, sync, resize, dispose, laneAtClientY, scene, camera, renderer };
 }

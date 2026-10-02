@@ -107,6 +107,24 @@ export const AUDIO = {
 };
 
 /**
+ * Seamless detail maps for the WebGL renderer.
+ *
+ * render3d.js builds its geometry from three.js primitives, so it needs tileable
+ * surface maps rather than character sprites -- pasting a 2D creature onto a
+ * capsule would look worse than the procedural material it replaces. These are
+ * near-neutral luminance maps: MeshStandardMaterial multiplies map x color, so
+ * surface detail is added while the renderer's per-element tint stays in charge.
+ *
+ * Each is optional. render3d.js falls back to its own procedural
+ * skinTexture() for any key the manifest does not provide.
+ */
+export const TEXTURES = {
+  tex_fur:   { file: 'textures/tex_fur_v001.png',   kind: 'fur',   seed: 1207, repeat: 2 },
+  tex_scale: { file: 'textures/tex_scale_v001.png', kind: 'scale', seed: 3313, repeat: 2 },
+  tex_stone: { file: 'textures/tex_stone_v001.png', kind: 'stone', seed: 5077, repeat: 3 }
+};
+
+/**
  * Attribution carried in the manifest and surfaced by the UI credits line.
  * Only entries this tool owns belong here -- Cinzel is already credited in the
  * manifest, and re-adding it would double-count the font.

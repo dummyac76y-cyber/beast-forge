@@ -245,6 +245,79 @@ export function drawFort(side) {
   return r;
 }
 
+// ------------------------------------------------------- TILEABLE TEXTURES
+// The WebGL renderer builds geometry from primitives and needs *seamless tiling*
+// maps, not character sprites -- a 2D creature pasted onto a capsule looks worse
+// than the procedural material it would replace. So the asset pipeline supplies
+// detail maps here and render3d.js consumes them.
+//
+// The maps are deliberately near-neutral luminance: MeshStandardMaterial
+// multiplies map x color, so a mid-grey detail map adds surface interest while
+// the per-element tint stays under the renderer's control (see spec.mjs).
+
+/** Value noise on a lattice that wraps at `P`, so the result tiles seamlessly. */
+function tiledNoise(u, v, seed, fx, fy, octaves) {
+  const wrap = (i, P) => ((i % P) + P) % P;
+  let val = 0, amp = 0.5, norm = 0;
+  let mx = fx, my = fy;
+  for (let o = 0; o < octaves; o++) {
+    const x = u * mx, y = v * my;
+    const xi = Math.floor(x), yi = Math.floor(y);
+    const xf = smooth(x - xi), yf = smooth(y - yi);
+    const s = seed + o * 17;
+    const a = hash2(wrap(xi, mx), wrap(yi, my), s);
+    const b = hash2(wrap(xi + 1, mx), wrap(yi, my), s);
+    const c = hash2(wrap(xi, mx), wrap(yi + 1, my), s);
+    const d = hash2(wrap(xi + 1, mx), wrap(yi + 1, my), s);
+    val += amp * ((a * (1 - xf) + b * xf) * (1 - yf) + (c * (1 - xf) + d * xf) * yf);
+    norm += amp; amp *= 0.5; mx *= 2; my *= 2;
+  }
+  return val / norm;
+}
+const smooth = t => t * t * (3 - 2 * t);
+
+/**
+ * Seamless detail map, 256x256, centred near 0.86 so multiplying it into a
+ * material's colour preserves overall brightness.
+ */
+export function drawTilingTexture(kind, seed) {
+  const S = 256;
+  const r = new Raster(S, S);
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      const u = x / S, v = y / S;
+      let shade;
+      if (kind === 'fur') {
+        // Anisotropic: stretched along U so it reads as fur lying along the body.
+        const strands = tiledNoise(u, v, seed, 3, 48, 4);
+        const clumps = tiledNoise(u, v, seed + 91, 5, 5, 3);
+        const fine = tiledNoise(u, v, seed + 13, 12, 96, 2);
+        shade = 0.72 + 0.42 * (strands * 0.55 + clumps * 0.3 + fine * 0.15);
+      } else if (kind === 'scale') {
+        // Overlapping scale rows. Row count is integral so the offset rows wrap.
+        const rows = 16;
+        const row = Math.floor(v * rows);
+        const uu = u * rows + (row % 2) * 0.5;
+        const cx = uu - Math.floor(uu) - 0.5;
+        const cy = v * rows - row - 0.5;
+        const d = Math.sqrt(cx * cx + cy * cy * 1.7);
+        const rim = smooth(Math.min(1, Math.max(0, (d - 0.26) / 0.36)));
+        const grain = tiledNoise(u, v, seed + 7, 16, 16, 3);
+        shade = 0.62 + 0.30 * (1 - rim) + 0.24 * grain;
+      } else { // 'stone'
+        const base = tiledNoise(u, v, seed, 6, 6, 5);
+        const crackN = tiledNoise(u, v, seed + 41, 9, 9, 3);
+        const cracks = Math.pow(Math.abs(crackN - 0.5) * 2, 3);
+        const grit = tiledNoise(u, v, seed + 5, 64, 64, 2);
+        shade = 0.70 + 0.34 * base - 0.30 * cracks + 0.06 * grit;
+      }
+      const g = Math.max(0, Math.min(255, Math.round(shade * 200)));
+      r.blend(x, y, [g, g, g], 1);
+    }
+  }
+  return r;
+}
+
 // -------------------------------------------------------------- BACKGROUNDS
 export function drawBackground(themeKey) {
   const t = THEMES[themeKey];

@@ -91,3 +91,54 @@ over a 450-unit virtual height. Lane *i* is centred at
 
 **Lesson.** Any browser test that clicks a virtual-space game needs the lane
 geometry from `render.js`, not eyeballed fractions.
+
+---
+
+## B4 — QA asserted the player must always take damage
+
+**Status:** FIXED (2026-10-02) · **Found by:** `npm run qa` failing intermittently
+
+**Symptom.** `webgl: no damage to the player fort in 40s — the battle loop looks
+stalled`, on some runs but not others, while the same run went on to show
+`battle resolved -> "Your fort has fallen"`. The battle was clearly not stalled;
+the assertion was wrong.
+
+**Root cause.** The check assumed `playerFort.currentHp < maxHp` was an invariant
+for "combat is happening". It is not. The engine is seeded from a deck plus lane
+clicks; when those clicks happen to build a defensive line that stops every
+enemy, the player's fort legitimately sits at full HP for the whole engagement
+and the battle is decided at the enemy fort instead.
+
+**Fix.** Assert on the invariant that actually holds — the *sum* of both forts'
+HP must fall:
+
+```js
+(Number(player) + Number(enemy)) < totalAtStart
+```
+
+That holds no matter who wins the lane war. The end-state wait was also raised
+from 60 s to 120 s, because a fully-blocked battle legitimately runs longer.
+
+**Lesson.** A flaky assertion against a stochastic system is usually a wrong
+invariant, not a flaky system. Before loosening a timeout, ask what must be true
+regardless of RNG.
+
+---
+
+## B5 — `decodePNG` only handled RGBA, so QA crashed on screenshots
+
+**Status:** FIXED (2026-10-02) · **Found by:** `npm run qa` after adding tone analysis
+
+**Symptom.** `Error: unsupported PNG: bitDepth=8 colorType=2` from
+`analyseFrame()`, crashing the whole QA run.
+
+**Root cause.** The decoder in `tools/ai-studio/scripts/lib/png.mjs` was written
+against this repo's own encoder, which always writes colour type 6 (RGBA).
+Playwright writes screenshots as colour type 2 (RGB, no alpha).
+
+**Fix.** Generalised the decoder to accept both and always emit RGBA, so callers
+never branch. It still rejects anything else loudly — a verifier that silently
+skips a file it could not read is worse than one that fails.
+
+**Lesson.** When a utility is reused by a second consumer, widen it to the union
+of both callers' inputs rather than special-casing at the call site.

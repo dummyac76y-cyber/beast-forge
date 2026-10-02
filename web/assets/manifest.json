@@ -210,5 +210,19 @@
       "volume": 0.6
     }
   },
-  "generatedBy": "tools/ai-studio/scripts/generate-assets.mjs"
+  "generatedBy": "tools/ai-studio/scripts/generate-assets.mjs",
+  "textures": {
+    "tex_fur": {
+      "file": "textures/tex_fur_v001.png",
+      "repeat": 2
+    },
+    "tex_scale": {
+      "file": "textures/tex_scale_v001.png",
+      "repeat": 2
+    },
+    "tex_stone": {
+      "file": "textures/tex_stone_v001.png",
+      "repeat": 3
+    }
+  }
 }

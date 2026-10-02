@@ -262,7 +262,10 @@
     const three = globalThis.__beastForge3D;
     if (three && typeof three.createRenderer3D === 'function' && !forceCanvas2D) {
       try {
-        return three.createRenderer3D(cv);
+        // Hand the shared AssetStore over so render3d.js can use the manifest's
+        // painted backgrounds and tiling detail maps. It is optional: with no
+        // store the 3D renderer falls back to its own procedural materials.
+        return three.createRenderer3D(cv, { assets });
       } catch (e) {
         console.warn('Beast Forge: WebGL unavailable, using 2D renderer.', e);
       }

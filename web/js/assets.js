@@ -23,10 +23,18 @@
 //     "audio": {
 //       "fire": { "file": "audio/fire.ogg", "volume": 0.7 }
 //     },
+//     "textures": {
+//       "tex_stone": { "file": "textures/stone.png", "repeat": 3 }
+//     },
 //     "fonts": [
 //       { "family": "Cinzel", "file": "fonts/cinzel-latin-600-normal.woff2", "weight": 600 }
 //     ]
 //   }
+//
+// The "textures" section is for seamless tiling maps consumed by the WebGL
+// renderer (render3d.js). Those are different from sprites on purpose: the 3D
+// renderer builds geometry from primitives and wants tileable surface detail,
+// not character art. Every section is optional and independently degradable.
 'use strict';
 
 // Naming convention the renderer uses to look sprites up. Kept here as data so
@@ -51,11 +59,12 @@ class AssetStore {
     this.sprites = {};      // key -> { img, frameW, frameH, anchorX, anchorY, flipOnEnemy, cover }
     this.audio = {};        // key -> { buffer, volume }
     this._rawAudio = {};    // key -> { bytes, volume }; decoded lazily after a gesture
+    this.textures = {};     // key -> { img, repeat }; tiling maps for the WebGL renderer
     this.fonts = [];        // { family, weight }
     this.sources = [];      // human-readable attribution, surfaced in the UI
     this.loaded = false;
     this.failed = false;
-    this.stats = { spriteHits: 0, spriteMisses: 0, audioHits: 0, audioMisses: 0, fontsLoaded: 0, errors: [] };
+    this.stats = { spriteHits: 0, spriteMisses: 0, audioHits: 0, audioMisses: 0, textureHits: 0, textureMisses: 0, fontsLoaded: 0, errors: [] };
   }
 
   url(rel) {
@@ -95,6 +104,7 @@ class AssetStore {
         return Promise.all([
           this._loadSprites(m.sprites),
           this._loadAudio(m.audio),
+          this._loadTextures(m.textures),
           this._loadFonts(m.fonts)
         ]);
       })
@@ -126,6 +136,24 @@ class AssetStore {
           resolve();
         };
         img.onerror = () => { this.stats.errors.push('sprite ' + key + ': ' + spec.file); resolve(); };
+        img.src = this.url(spec.file);
+      });
+    });
+    return Promise.all(jobs);
+  }
+
+  _loadTextures(map) {
+    if (!map) return Promise.resolve();
+    const jobs = Object.keys(map).map(key => {
+      const spec = map[key] || {};
+      if (!spec.file) return Promise.resolve();
+      return new Promise(resolve => {
+        const img = new Image();
+        img.onload = () => {
+          this.textures[key] = { img, repeat: spec.repeat || 1 };
+          resolve();
+        };
+        img.onerror = () => { this.stats.errors.push('texture ' + key + ': ' + spec.file); resolve(); };
         img.src = this.url(spec.file);
       });
     });
@@ -236,15 +264,25 @@ class AssetStore {
     return a || null;
   }
 
-  hasAnySprites() { return Object.keys(this.sprites).length > 0; }
-  hasAnyAudio()   { return Object.keys(this.audio).length > 0; }
-  hasFonts()      { return this.fonts.length > 0; }
+  /** Tiling map for the WebGL renderer, or null -> caller keeps its own. */
+  texture(key) {
+    const t = this.textures[key];
+    if (t) this.stats.textureHits++;
+    else this.stats.textureMisses++;
+    return t || null;
+  }
+
+  hasAnySprites()   { return Object.keys(this.sprites).length > 0; }
+  hasAnyAudio()     { return Object.keys(this.audio).length > 0; }
+  hasAnyTextures()  { return Object.keys(this.textures).length > 0; }
+  hasFonts()        { return this.fonts.length > 0; }
 
   /** Short human summary for the debug overlay / console. */
   summary() {
     return (this.loaded ? 'loaded' : 'pending') +
       ' sprites=' + Object.keys(this.sprites).length +
       ' audio=' + Object.keys(this.audio).length +
+      ' textures=' + Object.keys(this.textures).length +
       ' fonts=' + this.fonts.length +
       (this.stats.errors.length ? ' errors=' + this.stats.errors.length : '');
   }

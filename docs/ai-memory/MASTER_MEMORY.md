@@ -32,12 +32,38 @@ Measured with `npm run doctor`, not assumed:
 
 - Ubuntu 22.04.5, Linux 6.18 microvm
 - Node v22.23.2, npm 10.9.8, Python 3.10.12
-- **No Java/JDK, no Android SDK** → the Gradle Android app cannot be built or
-  tested in this environment. Any claim about the Android build is unverified.
 - **No GPU** (no NVIDIA, no ROCm), 4 cores, ~11.9 GiB RAM, ~17 GiB free disk
 - ComfyUI, ACE-Step, Kokoro, Piper, Mem0: none installed
 - Playwright + Chromium: installed and working
 - npm registry reachable
+
+### Android toolchain: attempted, blocked by TLS interception
+
+`doctor` reports no JDK and no Android SDK, so the Kotlin app cannot be built
+here by default. That was chased down on 2026-10-02:
+
+- `openjdk-17-jdk-headless` installed fine via apt.
+- Gradle 8.13 downloaded and ran — but only by fetching the archive **with Node**,
+  because `curl` fails with `SSL certificate problem: self-signed certificate in
+  certificate chain`.
+- Node works because it uses its own bundled CA roots; the system bundle (used by
+  curl and by the JVM) does not contain the intercepting proxy's CA.
+- Consequence: `sdkmanager` reports `Failed to download any source lists! / IO
+  exception while downloading manifest` and cannot install `platforms;android-36`
+  or `build-tools;36.0.0`.
+
+**So the Android build remains unverified**, and it is not merely "tooling not
+installed": this environment cannot fetch the Android SDK or resolve AndroidX /
+Compose dependencies from Maven, because the JVM does not trust the proxy. Fixing
+it needs the proxy's CA in `/etc/ssl/certs/java/cacerts` — an environment
+provisioning task, not a repo change.
+
+Also note the project has **no Gradle wrapper** (`gradlew` and
+`gradle/wrapper/gradle-wrapper.properties` are absent; only
+`gradle/libs.versions.toml` exists), so the repo cannot build without a
+system Gradle of a matching version. Adding a wrapper would be a genuine
+improvement, but it is a repo change with its own version-pinning consequences,
+so it is flagged rather than done.
 
 ## Golden rules for agents
 

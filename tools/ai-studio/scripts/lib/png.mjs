@@ -114,3 +114,61 @@ export function readPNGHeader(buf) {
   if (buf.toString('latin1', 12, 16) !== 'IHDR') return null;
   return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20), bitDepth: buf[24], colorType: buf[25] };
 }
+
+/**
+ * Decode a non-interlaced 8-bit PNG. Handles colour type 2 (RGB) and 6 (RGBA)
+ * and always returns RGBA, so callers do not have to branch. Needed because
+ * Playwright screenshots come back as RGB while this repo's encoder writes RGBA.
+ * Anything else is rejected loudly -- the verifier must never pass a file it
+ * silently failed to read.
+ */
+export function decodePNG(buf) {
+  const head = readPNGHeader(buf);
+  if (!head) throw new Error('not a PNG');
+  if (head.bitDepth !== 8 || (head.colorType !== 6 && head.colorType !== 2)) {
+    throw new Error(`unsupported PNG: bitDepth=${head.bitDepth} colorType=${head.colorType}`);
+  }
+  const { width: w, height: h } = head;
+  const ch = head.colorType === 6 ? 4 : 3;
+
+  const idat = [];
+  let p = 8;
+  while (p < buf.length) {
+    const len = buf.readUInt32BE(p);
+    const type = buf.toString('latin1', p + 4, p + 8);
+    if (type === 'IDAT') idat.push(buf.subarray(p + 8, p + 8 + len));
+    if (type === 'IEND') break;
+    p += 12 + len;
+  }
+  const raw = zlib.inflateSync(Buffer.concat(idat));
+
+  const stride = w * ch;
+  const flat = new Uint8Array(h * stride);
+  for (let y = 0; y < h; y++) {
+    const f = raw[y * (stride + 1)];
+    const row = raw.subarray(y * (stride + 1) + 1, y * (stride + 1) + 1 + stride);
+    for (let i = 0; i < stride; i++) {
+      const x = row[i];
+      const a = i >= ch ? flat[y * stride + i - ch] : 0;
+      const b = y > 0 ? flat[(y - 1) * stride + i] : 0;
+      const c = (y > 0 && i >= ch) ? flat[(y - 1) * stride + i - ch] : 0;
+      let v;
+      switch (f) {
+        case 0: v = x; break;
+        case 1: v = x + a; break;
+        case 2: v = x + b; break;
+        case 3: v = x + ((a + b) >> 1); break;
+        case 4: v = x + paeth(a, b, c); break;
+        default: throw new Error(`unknown PNG filter type ${f} on row ${y}`);
+      }
+      flat[y * stride + i] = v & 0xff;
+    }
+  }
+
+  const out = new Uint8Array(w * h * 4);
+  for (let i = 0, j = 0; i < flat.length; i += ch, j += 4) {
+    out[j] = flat[i]; out[j + 1] = flat[i + 1]; out[j + 2] = flat[i + 2];
+    out[j + 3] = ch === 4 ? flat[i + 3] : 255;
+  }
+  return { width: w, height: h, data: out };
+}

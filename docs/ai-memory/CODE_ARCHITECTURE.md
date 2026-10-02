@@ -29,29 +29,55 @@ binding with `render.js`.
 
 ## Renderer split — the most important thing to know
 
-`ui.js:makeRenderer()` picks the renderer:
+`ui.js:makeRenderer()` picks the renderer and passes the shared `AssetStore` in:
 
 ```js
 const forceCanvas2D = /[?&]2d(?:[=&]|$)/.test(location.search);
-if (globalThis.__beastForge3D?.createRenderer3D && !forceCanvas2D) → WebGL
-else → Canvas 2D
+if (globalThis.__beastForge3D?.createRenderer3D && !forceCanvas2D)
+  return three.createRenderer3D(cv, { assets });   // WebGL
+return new Renderer(cv, assets);                   // Canvas 2D
 ```
 
-**The two renderers do not consume the same things.**
+Both renderers implement the same `render(engine, selectedLane, hoveredLane)` /
+`laneAtClientY(y)` / `resize()` interface, so `ui.js` is renderer-agnostic.
 
-| | WebGL (`render3d.js`) | Canvas 2D (`render.js`) |
+### What each renderer consumes from the manifest
+
+| Manifest section | WebGL (`render3d.js`) | Canvas 2D (`render.js`) |
 |---|---|---|
-| Manifest sprites | No — builds its own `CanvasTexture` meshes | Yes |
-| Backgrounds | Procedural theme colours | Yes, `bg_<theme>` |
-| Audio (`audio.js`) | Yes | Yes |
-| Fonts | Yes | Yes |
+| `sprites.unit_<race>` | no — 3D primitive geometry | yes |
+| `sprites.fort_<side>` | no — 3D fort geometry | yes |
+| `sprites.bg_<theme>` | **yes** — `scene.background`, cover-fitted | yes, `drawImage` |
+| `textures.tex_*` | **yes** — `roughnessMap` + `bumpMap` | no |
+| `audio.*` | yes | yes |
+| `fonts.*` | yes | yes |
 
-So `web/assets/manifest.json` art is visible on the `?2d` path only. The WebGL
-renderer falls back to Canvas 2D automatically when WebGL is unavailable, so
-`?2d` is not dead code — it is the fallback, plus the art path.
+### Why the WebGL renderer gets tiling maps, not character sprites
 
-This asymmetry is deliberate-by-accident, not a design decision anyone wrote
-down. Wiring the manifest into `render3d.js` is the obvious next feature.
+`render3d.js` builds geometry from three.js primitives. Pasting a 2D creature
+image onto a capsule would look *worse* than the procedural material it
+replaces, and would fight the walk-cycle animation. So the 3D path takes the
+kind of art it can actually use:
+
+- **Painted backgrounds** → `scene.background`, cover-fitted to the viewport with
+  `repeat`/`offset` (three draws a background texture across the full NDC quad,
+  so cropping is just scaling past the edges). Biased upward so the horizon stays
+  in frame.
+- **Seamless detail maps** → attached as `roughnessMap` and `bumpMap`, never as
+  `map`. This is deliberate: an albedo map multiplies into the material colour
+  and would darken the per-element palette, whereas roughness/bump variation adds
+  real surface interest under the existing lighting while leaving colour and
+  brightness untouched.
+
+Every lookup is optional. With no manifest at all, `setTheme()` falls back to the
+flat theme colour and `detailMap()` returns `null`, so the renderer behaves
+exactly as it did before this existed. `qa/run-qa.mjs` asserts this on both
+renderers by aborting every asset request and requiring the scene to still light
+up.
+
+`AssetStore` gained a `textures` section (key → `{ img, repeat }`) with a
+`texture(key)` accessor and `textureHits`/`textureMisses` counters, mirroring the
+`sprites` handling.
 
 ## Virtual battlefield space
 
@@ -77,6 +103,10 @@ tools/ai-studio/scripts/lib/spec.mjs     ← the contract (single source of trut
         │
         └─ verify.mjs  re-derives the contract from web/js/*.js and fails on drift
 ```
+
+Promoting is idempotent: generation is deterministic, so re-running
+`assets && assets:promote` rewrites nothing and exits cleanly. Only a genuine
+content change to an existing asset needs `--force`.
 
 `web/js/assets.js` (`AssetStore`) is the consumer. Design contract, quoted from
 its own header:

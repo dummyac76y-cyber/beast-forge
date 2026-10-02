@@ -18,6 +18,8 @@ its `_readme` block and the Cinzel credit. Never replace it wholesale.
 All procedurally rendered from code. No model weights, no third-party art, no
 network access required to rebuild.
 
+### Sprites — Canvas 2D renderer
+
 | Key | File | Dimensions | Consumed by |
 |---|---|---|---|
 | `unit_biped` | `sprites/units/biped_v001.png` | 78×78 | Canvas 2D |
@@ -25,20 +27,45 @@ network access required to rebuild.
 | `unit_dragon` | `sprites/units/dragon_v001.png` | 126×126 | Canvas 2D |
 | `fort_player` | `sprites/forts/fort_player_v001.png` | 120×275 | Canvas 2D |
 | `fort_enemy` | `sprites/forts/fort_enemy_v001.png` | 120×275 | Canvas 2D |
-| `bg_forest` | `sprites/bg/bg_forest_v001.png` | 1024×576 | Canvas 2D |
-| `bg_volcano` | `sprites/bg/bg_volcano_v001.png` | 1024×576 | Canvas 2D |
-| `bg_snow` | `sprites/bg/bg_snow_v001.png` | 1024×576 | Canvas 2D |
-| `bg_citadel` | `sprites/bg/bg_citadel_v001.png` | 1024×576 | Canvas 2D |
-| `bg_arena` | `sprites/bg/bg_arena_v001.png` | 1024×576 | Canvas 2D |
 
-Audio (mono, 22 050 Hz, 16-bit PCM WAV). Keys mirror the `CUES` table in
+### Backgrounds — both renderers
+
+The `bg_*` sprites are drawn by the Canvas 2D renderer *and* used as
+`scene.background` in the WebGL renderer.
+
+| Key | File | Dimensions |
+|---|---|---|
+| `bg_forest` | `sprites/bg/bg_forest_v001.png` | 1024×576 |
+| `bg_volcano` | `sprites/bg/bg_volcano_v001.png` | 1024×576 |
+| `bg_snow` | `sprites/bg/bg_snow_v001.png` | 1024×576 |
+| `bg_citadel` | `sprites/bg/bg_citadel_v001.png` | 1024×576 |
+| `bg_arena` | `sprites/bg/bg_arena_v001.png` | 1024×576 |
+
+### Textures — WebGL renderer only
+
+Seamless 256×256 tiling detail maps. Used as `roughnessMap` + `bumpMap`, never as
+albedo, so they add surface relief without shifting the per-element palette.
+
+| Key | File | Applies to | `repeat` |
+|---|---|---|---|
+| `tex_fur` | `textures/tex_fur_v001.png` | biped + quadruped | 2 |
+| `tex_scale` | `textures/tex_scale_v001.png` | dragon | 2 |
+| `tex_stone` | `textures/tex_stone_v001.png` | terrain, lanes, rocks, forts | 3 |
+
+`verify.mjs` decodes each one and fails if it does not tile: the wrap-edge delta
+must stay within 2.5× the typical interior pixel delta along the same axis.
+Tiling comes from value noise on a lattice that wraps at each octave's frequency.
+
+### Audio
+
+Mono, 22 050 Hz, 16-bit PCM WAV. Keys mirror the `CUES` table in
 `web/js/audio.js`, so every sound the game fires has a sample:
 
 `select` `button` `coin` `evolve` `fire` `ice` `light` `wind` `earth` `poison`
 `biped_die` `quad_die` `dragon_die` `fire_explode` `fort_ruin` `stage_start`
 `victory` `defeat`
 
-Total ≈ 689 KiB for the whole generated set.
+Total ≈ 767 KiB for the whole generated set.
 
 ### Naming
 

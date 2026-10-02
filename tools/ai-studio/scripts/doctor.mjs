@@ -34,7 +34,13 @@ add('Runtime', 'Git', git ? 'READY' : 'NOT INSTALLED', git || '');
 const java = which('java');
 add('Runtime', 'Java', java ? 'READY' : 'NOT INSTALLED', java || 'JDK absent -- Android build cannot run here');
 add('Runtime', 'Android SDK', process.env.ANDROID_HOME ? 'READY' : 'NOT INSTALLED',
-  process.env.ANDROID_HOME || 'ANDROID_HOME unset');
+  process.env.ANDROID_HOME || 'ANDROID_HOME unset -- cannot fetch it if TLS is intercepted');
+// The repo has no gradlew, so a system Gradle is required. Worth surfacing:
+// `gradle` on PATH does not mean the Android app can actually build.
+const hasWrapper = fs.existsSync(path.join(REPO, 'gradlew'));
+const gradle = which('gradle');
+add('Runtime', 'Gradle', hasWrapper ? 'READY (wrapper)' : (gradle ? 'READY (system)' : 'NOT INSTALLED'),
+  hasWrapper ? 'gradlew present' : (gradle ? `no gradlew in repo; using system ${gradle}` : 'no gradlew and no system gradle'));
 
 // -------------------------------------------------------------- AI engines
 // ComfyUI: probe its local API rather than trusting the port being open.
@@ -110,12 +116,17 @@ if (!fs.existsSync(manifestPath)) {
   const m = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
   const spriteCount = Object.keys(m.sprites || {}).length;
   const audioCount = Object.keys(m.audio || {}).length;
+  const textureCount = Object.keys(m.textures || {}).length;
   let missing = 0;
-  for (const s of [...Object.values(m.sprites || {}), ...Object.values(m.audio || {}), ...(m.fonts || [])]) {
+  const allFiles = [
+    ...Object.values(m.sprites || {}), ...Object.values(m.audio || {}),
+    ...Object.values(m.textures || {}), ...(m.fonts || [])
+  ];
+  for (const s of allFiles) {
     if (!fs.existsSync(path.join(REPO, 'web', 'assets', s.file))) missing++;
   }
   add('Assets', 'Manifest', missing ? 'INCOMPLETE' : 'READY',
-      `${spriteCount} sprites, ${audioCount} clips, ${(m.fonts || []).length} fonts` +
+      `${spriteCount} sprites, ${audioCount} clips, ${textureCount} tiling maps, ${(m.fonts || []).length} fonts` +
       (missing ? `, ${missing} FILE(S) MISSING` : ', all files present'));
 }
 

@@ -17,6 +17,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { listen } from './serve.mjs';
+import { decodePNG } from '../scripts/lib/png.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..', '..', '..');
@@ -85,6 +86,34 @@ async function checkAssets(page, label) {
   return s;
 }
 
+/**
+ * Tone statistics for a rendered frame, from a PNG screenshot.
+ *
+ * A flat `scene.background = Color` produces a sky strip with near-zero
+ * variance; the painted manifest background does not. That makes "did the art
+ * actually reach the screen?" measurable instead of assumed.
+ */
+function analyseFrame(buf) {
+  const { width: w, height: h, data } = decodePNG(buf);
+  const luma = (i) => 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2];
+  const all = [], sky = [];
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      const l = luma(i);
+      all.push(l);
+      if (y < h * 0.18) sky.push(l);          // above the lanes: sky/backdrop
+    }
+  }
+  const stat = (a) => {
+    const mean = a.reduce((s, v) => s + v, 0) / a.length;
+    const varr = a.reduce((s, v) => s + (v - mean) ** 2, 0) / a.length;
+    const sorted = [...a].sort((x, y) => x - y);
+    return { mean, sd: Math.sqrt(varr), p05: sorted[Math.floor(a.length * 0.05)], p95: sorted[Math.floor(a.length * 0.95)] };
+  };
+  return { w, h, all: stat(all), sky: stat(sky) };
+}
+
 async function playBattle(page, label, shotName, wantSprites) {
   await page.click('#nav button[data-screen="campaign"]');
   await page.waitForSelector('button.stage:not([disabled])', { timeout: 10000 });
@@ -141,16 +170,27 @@ async function playBattle(page, label, shotName, wantSprites) {
   // Direct evidence the manifest art is actually consumed by the renderer.
   const hits = await page.evaluate(() => {
     const st = globalThis.__beastForgeAssets.stats;
-    return { spriteHits: st.spriteHits, spriteMisses: st.spriteMisses };
+    return {
+      spriteHits: st.spriteHits, spriteMisses: st.spriteMisses,
+      textureHits: st.textureHits, textureMisses: st.textureMisses
+    };
   });
   if (renderer === '2d') {
     hits.spriteHits > 0
       ? ok(`${label}: renderer consumed manifest sprites (${hits.spriteHits} sprite draws, ${hits.spriteMisses} procedural fallbacks)`)
       : fail(`${label}: manifest sprites never used despite ${wantSprites.length} being loaded`);
+    hits.textureHits === 0
+      ? ok(`${label}: 2D renderer ignores tiling maps (${hits.textureHits} lookups) — expected, they are for WebGL`)
+      : ok(`${label}: 2D renderer also looked up ${hits.textureHits} tiling maps`);
   } else {
-    // Reported, not asserted: render3d.js builds its own CanvasTextures and never
-    // consults the manifest, so spriteHits staying 0 is expected on the WebGL path.
-    ok(`webgl: sprite draws=${hits.spriteHits} — render3d.js is procedural and does not read the manifest (by design)`);
+    // render3d.js now consumes the manifest: painted backgrounds via sprite()
+    // lookups and surface detail via texture() lookups.
+    hits.spriteHits > 0
+      ? ok(`webgl: painted background from manifest (${hits.spriteHits} sprite lookups)`)
+      : fail('webgl: renderer never looked up a background sprite — manifest art is not reaching the 3D path');
+    hits.textureHits > 0
+      ? ok(`webgl: surface detail maps from manifest (${hits.textureHits} texture lookups)`)
+      : fail('webgl: renderer never looked up a tiling texture — detail maps are not reaching the 3D path');
   }
 
   // Two screenshots must differ: proves the canvas is repainting a live battle.
@@ -163,6 +203,20 @@ async function playBattle(page, label, shotName, wantSprites) {
   Buffer.compare(shot1, shot2) !== 0
     ? ok(`${label}: canvas is animating (frame changed over the battle clock)`)
     : fail(`${label}: canvas did not change between t≈2s and t≈6s — nothing is being drawn`);
+
+  // Tone analysis: catches a black frame, a blown-out frame, and -- on the 3D
+  // path -- a flat sky colour standing in for the painted background.
+  const tone = analyseFrame(shot2);
+  const range = tone.all.p95 - tone.all.p05;
+  range > 40
+    ? ok(`${label}: tonal range p05..p95 = ${range.toFixed(0)} (not flat)`)
+    : fail(`${label}: frame is nearly flat (p05..p95 = ${range.toFixed(0)}) — nothing is being lit`);
+  tone.all.mean > 12 && tone.all.mean < 215
+    ? ok(`${label}: exposure sane (mean luma ${tone.all.mean.toFixed(0)})`)
+    : fail(`${label}: frame is black (${tone.all.mean.toFixed(0)}) or blown out (${tone.all.mean.toFixed(0)})`);
+  tone.sky.sd > 3
+    ? ok(`${label}: backdrop has real detail (sky sd ${tone.sky.sd.toFixed(1)})`)
+    : fail(`${label}: backdrop is a flat colour (sky sd ${tone.sky.sd.toFixed(1)}) — no painted background`);
 
   if (renderer === '2d') {
     const distinct = await page.evaluate(() => {
@@ -183,29 +237,41 @@ async function playBattle(page, label, shotName, wantSprites) {
   const after = await page.locator('#hud .stat').textContent();
   ok(`${label}: fort HP "${before.trim()}" -> "${after.trim()}"`);
 
-  // The real proof of playability: the battle must resolve to a terminal state and
-  // the end-of-battle screen must appear. Wait on state, never on a timer.
+  // The real proof of playability: the battle must be live (something is taking
+// damage) and must resolve. Wait on state, never on a timer.
+  //
+  // Note: "player fort took damage" is NOT a valid invariant. The scripted
+  // clicks can deploy a full defensive line that stops every enemy, in which
+  // case the player's fort legitimately stays at full HP for a long time.
+  // Summed HP across both forts is the robust signal.
   const readForts = async () => {
     const t = await page.locator('#hud .stat').textContent();
-    const mine = /Your fort (\d+)\/(\d+)/.exec(t);
-    return mine ? Number(mine[1]) : null;
+    const mine = /Your fort (\d+)\//.exec(t);
+    const theirs = /Enemy (\d+)\/(\d+)/.exec(t);
+    return {
+      mine: mine ? Number(mine[1]) : null,
+      theirs: theirs ? Number(theirs[1]) : null,
+      total: mine && theirs ? Number(mine[1]) + Number(theirs[1]) : null
+    };
   };
   const startHp = await readForts();
   try {
     await page.waitForFunction(
-      () => {
-        const m = /Your fort (\d+)\//.exec(document.querySelector('#hud .stat')?.textContent || '');
-        return m && Number(m[1]) < 800;
-      }, null, { timeout: 40000 });
-    ok(`${label}: live combat — player fort ${startHp} -> ${await readForts()} HP`);
+      (total0) => {
+        const t = document.querySelector('#hud .stat')?.textContent || '';
+        const a = /Your fort (\d+)\//.exec(t), b = /Enemy (\d+)\/(\d+)/.exec(t);
+        return a && b && (Number(a[1]) + Number(b[1])) < total0;
+      }, startHp.total, { timeout: 60000 });
+    const hurt = await readForts();
+    ok(`${label}: live combat — forts ${startHp.mine}+${startHp.theirs} -> ${hurt.mine}+${hurt.theirs} HP`);
   } catch {
-    fail(`${label}: no damage to the player fort in 40s — the battle loop looks stalled`);
+    fail(`${label}: no fort took damage in 60s — the battle loop looks stalled`);
   }
 
   // End-of-battle overlay. Regression guard for the onGameOver() null
   // dereference: before that fix no overlay ever appeared and no rewards landed.
   try {
-    await page.waitForSelector('.overlay h2', { timeout: 60000 });
+    await page.waitForSelector('.overlay h2', { timeout: 120000 });
     const h2 = (await page.locator('.overlay h2').textContent()).trim();
     const sub = (await page.locator('.overlay .sub').textContent()).trim();
     ok(`${label}: battle resolved -> "${h2}" / "${sub}"`);
@@ -213,7 +279,7 @@ async function playBattle(page, label, shotName, wantSprites) {
     await page.waitForSelector('button.stage', { timeout: 10000 });
     ok(`${label}: "Return" navigates back to the campaign screen`);
   } catch {
-    fail(`${label}: battle never reached an end state (no .overlay within 60s)`);
+    fail(`${label}: battle never reached an end state (no .overlay within 120s)`);
   }
 
   if (shotName) {
@@ -236,19 +302,21 @@ try {
   }
 
   head('Graceful degradation (assets removed)');
-  {
+  // Both renderers must survive having no manifest at all. This is the guarantee
+  // that lets the AI Studio stay optional, and it is exactly the code path the
+  // new texture/background lookups in render3d.js have to fall back into.
+  for (const [label, query] of [['canvas2d', '?2d'], ['webgl', '']]) {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
     const errors = [];
     page.on('pageerror', e => errors.push(e.message));
-    // Simulate "AI Studio unavailable": block every asset file the manifest names.
-    const blocked = [...Object.values(expected.sprites), ...Object.values(expected.audio)]
-      .map(s => s.file).map(f => base + '/assets/' + f);
+    // Simulate "AI Studio unavailable": abort every asset request.
     await page.route('**/assets/**', route => route.abort());
-    await page.goto(base + '/?2d', { waitUntil: 'load' });
+    await page.goto(base + '/' + query, { waitUntil: 'load' });
     await page.waitForFunction(() => globalThis.__beastForgeAssets?.loaded === true, null, { timeout: 20000 });
     const s = await page.evaluate(() => ({
       sprites: Object.keys(globalThis.__beastForgeAssets.sprites).length,
+      textures: Object.keys(globalThis.__beastForgeAssets.textures || {}).length,
       loaded: globalThis.__beastForgeAssets.loaded
     }));
     await page.click('#nav button[data-screen="campaign"]');
@@ -257,10 +325,15 @@ try {
     await page.waitForFunction(
       () => parseInt(/(\d+)s/.exec(document.querySelector('#hud .wave')?.textContent || '0s')[1], 10) >= 2,
       null, { timeout: 20000 }
-    ).catch(() => fail('assets-blocked: battle clock never advanced'));
-    (s.sprites === 0 && errors.length === 0)
-      ? ok(`assets blocked -> 0 sprites loaded, game still booted and played (${blocked.length} URLs)`)
-      : fail(`assets blocked -> ${s.sprites} sprites, ${errors.length} page errors`);
+    ).catch(() => fail(`assets-blocked/${label}: battle clock never advanced`));
+
+    // With no art the frame still has to render -- procedural materials, flat sky.
+    const shot = await page.locator('#battleCanvas').screenshot();
+    const tone = analyseFrame(shot);
+    const range = tone.all.p95 - tone.all.p05;
+    (s.sprites === 0 && s.textures === 0 && errors.length === 0 && range > 40)
+      ? ok(`assets blocked (${label}) -> 0 sprites, 0 textures, still boots, plays and lights the scene (range ${range.toFixed(0)})`)
+      : fail(`assets blocked (${label}) -> sprites=${s.sprites} textures=${s.textures} errors=${errors.length} range=${range.toFixed(0)}`);
     await ctx.close();
   }
 } finally {
