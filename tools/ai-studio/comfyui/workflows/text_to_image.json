@@ -1,0 +1,61 @@
+{
+  "_comment": [
+    "ComfyUI API-format workflow for text-to-image.",
+    "Save yours via ComfyUI -> Workflow -> 'Save (API Format)' and drop it in here.",
+    "Node ids below are only defaults for a stock checkpoint loader + KSampler.",
+    "The CLI rebinds inputs by NAME (e.g. '6.text', '4.steps'), so you can",
+    "rearrange the graph as long as those input names survive."
+  ],
+
+  "3": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": 0,
+      "steps": 20,
+      "cfg": 7.0,
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "karras",
+      "denoise": 1.0,
+      "model": ["4", 0],
+      "positive": ["6", 0],
+      "negative": ["7", 0],
+      "latent_image": ["5", 0]
+    }
+  },
+
+  "4": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": { "ckpt_name": "sd_turbo.safetensors" }
+  },
+
+  "5": {
+    "class_type": "EmptyLatentImage",
+    "inputs": { "width": 512, "height": 512, "batch_size": 1 }
+  },
+
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "dark fantasy creature bestiary portrait, full body side profile view, centered, plain flat dark background, dramatic rim lighting, painted concept art, highly detailed, sharp silhouette",
+      "clip": ["4", 1]
+    }
+  },
+
+  "7": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "blurry, lowres, watermark, signature, text, deformed, extra limbs, cropped, jpeg artifacts",
+      "clip": ["4", 1]
+    }
+  },
+
+  "8": {
+    "class_type": "VAEDecode",
+    "inputs": { "samples": ["3", 0], "vae": ["4", 2] }
+  },
+
+  "9": {
+    "class_type": "SaveImage",
+    "inputs": { "filename_prefix": "beastforge", "images": ["8", 0] }
+  }
+}

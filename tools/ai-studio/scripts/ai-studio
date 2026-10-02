@@ -1,0 +1,454 @@
+#!/usr/bin/env python3
+"""ai-studio -- unified CLI for the Beast Forge AI Studio.
+
+    ai-studio doctor      detect every engine for real (never fakes a status)
+    ai-studio status      show config, paths and staged/generated assets
+    ai-studio art         generate art through a running ComfyUI
+    ai-studio music       generate music through ACE-Step
+    ai-studio voice       generate voice through Kokoro or Piper
+    ai-studio test        run the Playwright web QA suite
+    ai-studio promote     copy a staged asset into the game (never overwrites)
+
+Nothing here is required to run the game. If an engine is missing, the command
+says so and exits non-zero; the game is unaffected.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+
+from bf_studio import (  # noqa: E402
+    NOT_AVAILABLE, NOT_INSTALLED, NOT_RUNNING, READY, RUNNING,
+    STUDIO_DIR, host_resources, load_config, model_root, next_versioned,
+    path_for, promote, python_modules, staging_root, status_line,
+)
+
+GREEN, YELLOW, RED, DIM, RESET = "\033[32m", "\033[33m", "\033[31m", "\033[2m", "\033[0m"
+
+
+def colour(state: str) -> str:
+    if state.startswith(READY):
+        return GREEN
+    if state.startswith(RUNNING) or state == NOT_INSTALLED:
+        return YELLOW
+    if state == NOT_AVAILABLE:
+        return RED
+    return ""
+
+
+def print_state(label: str, state: str, detail: str = "") -> None:
+    print(f"{label:<12}{colour(state)}{state:<34}{RESET}{DIM}{detail}{RESET}")
+
+
+# --------------------------------------------------------------------------
+# doctor
+# --------------------------------------------------------------------------
+def cmd_doctor(cfg: dict, args) -> int:
+    res = host_resources()
+    gpu = res["gpu"]
+    mods = python_modules()
+
+    print("=" * 78)
+    print("Beast Forge AI Studio -- doctor")
+    print("=" * 78)
+    print(f"repo          {path_for(cfg, 'paths.repo_root')}")
+    print(f"model root    {model_root(cfg)}")
+    print(f"cpus          {res['cpus']}")
+    print(f"ram           {res['ram_mb']} MB" if res['ram_mb'] else "ram           unknown")
+    print(f"disk free     {res['disk_free_gb']} GB" if res['disk_free_gb'] else
+          "disk free     unknown")
+    print(f"python        {sys.version.split()[0]}")
+
+    print()
+    print("hardware")
+    if gpu["present"]:
+        print_state("GPU", READY, f"{gpu['vendor']} {gpu.get('name') or ''}")
+    else:
+        print("  GPU          " + YELLOW + "not detected" + RESET)
+        print("    " + DIM + cfg["resource_notes"]["cpu_only_warning"] + RESET)
+
+    # ---- ComfyUI -----------------------------------------------------------
+    print()
+    print("engines")
+    try:
+        from bf_comfyui import ComfyUIAdapter
+        comfy = ComfyUIAdapter(cfg)
+        if comfy.available():
+            stats = comfy.system_stats()
+            dev = stats.get("devices", [{}])[0]
+            print_state("ComfyUI", READY,
+                        f"service at {comfy.base_url}"
+                        + (f" on {dev.get('name')}" if dev.get("name") else ""))
+            ckpts = comfy.checkpoints()
+            if ckpts:
+                print("    " + DIM + f"checkpoints: {', '.join(ckpts[:6])}" + RESET)
+            else:
+                print("    " + YELLOW + "no checkpoint files found on the server" + RESET)
+        else:
+            install = path_for(cfg, "comfyui.install_dir")
+            if install.exists():
+                print_state("ComfyUI", NOT_RUNNING,
+                            f"installed at {install} but not serving at {comfy.base_url}")
+            else:
+                print_state("ComfyUI", NOT_INSTALLED,
+                            f"expected at {install}; see README#comfyui")
+    except Exception as exc:
+        print_state("ComfyUI", NOT_AVAILABLE, str(exc)[:80])
+
+    # ---- ACE-Step ----------------------------------------------------------
+    try:
+        from bf_acestep import ACEStepAdapter
+        ace = ACEStepAdapter(cfg)
+        if ace.available():
+            print_state("ACE-Step", READY, f"service at {ace.api_url}")
+        elif ace.installed():
+            print_state("ACE-Step", NOT_RUNNING,
+                        f"installed at {ace.install_dir}, service not reachable")
+        else:
+            print_state("ACE-Step", NOT_INSTALLED,
+                        f"expected at {ace.install_dir}; models are multi-GB")
+        if not gpu["present"]:
+            print("    " + YELLOW
+                  + "CPU-only: ACE-Step inference is impractical (minutes per "
+                    "second of audio). Use a GPU machine." + RESET)
+    except Exception as exc:
+        print_state("ACE-Step", NOT_AVAILABLE, str(exc)[:80])
+
+    # ---- Kokoro ------------------------------------------------------------
+    try:
+        from bf_voice import KokoroAdapter, PiperAdapter
+        kok = KokoroAdapter(cfg)
+        if mods.get("kokoro"):
+            print_state("Kokoro", READY, "python module importable")
+        else:
+            print_state("Kokoro", NOT_INSTALLED,
+                        "pip install 'kokoro>=0.9' 'misaki[en]'  (pulls torch)")
+        pip = PiperAdapter(cfg)
+        vfile = pip.voice_file()
+        if pip._bin() and vfile:
+            print_state("Piper", READY, f"{pip.voice} via {pip._bin()}")
+        elif pip._bin():
+            print_state("Piper", RUNNING, f"executable present, voice "
+                                          f"'{pip.voice}' .onnx missing")
+        else:
+            print_state("Piper", NOT_INSTALLED,
+                        "pip install piper-tts + download a voice .onnx")
+    except Exception as exc:
+        print_state("Voice", NOT_AVAILABLE, str(exc)[:80])
+
+    # ---- Playwright --------------------------------------------------------
+    node_ok = shutil.which("node") is not None
+    pw_mod = (HERE.parent / "qa" / "playwright" / "node_modules" /
+              ".bin" / "playwright")
+    if not node_ok:
+        print_state("Playwright", NOT_INSTALLED, "node not on PATH")
+    elif pw_mod.exists():
+        print_state("Playwright", READY, str(pw_mod))
+    else:
+        print_state("Playwright", NOT_INSTALLED,
+                    "run: ai-studio test --setup")
+
+    # ---- game --------------------------------------------------------------
+    print()
+    print("game (independent of all of the above)")
+    web = path_for(cfg, "paths.repo_root") / "web"
+    print_state("Web build", READY if (web / "index.html").exists() else NOT_INSTALLED,
+                str(web))
+    android = path_for(cfg, "paths.repo_root") / "app"
+    print_state("Android", READY if android.exists() else NOT_INSTALLED, str(android))
+    print()
+    print("The game runs fully without any AI engine installed.")
+    return 0
+
+
+# --------------------------------------------------------------------------
+# status
+# --------------------------------------------------------------------------
+def cmd_status(cfg: dict, args) -> int:
+    print("Beast Forge AI Studio -- status")
+    print()
+    print(f"model root     {model_root(cfg)}")
+    print(f"staging root   {staging_root(cfg)}")
+    print(f"web asset root {path_for(cfg, 'paths.asset_root')}")
+    print()
+    staging = staging_root(cfg)
+    found = sorted(p for p in staging.rglob("*") if p.is_file())
+    if found:
+        print(f"staged assets ({len(found)}):")
+        for p in found:
+            print(f"  {p.stat().st_size / 1024:8.1f} KB  {p.relative_to(staging)}")
+    else:
+        print("staged assets: none yet")
+    print()
+    if model_root(cfg).exists():
+        usage = sum(f.stat().st_size for f in model_root(cfg).rglob("*") if f.is_file())
+        print(f"model root holds {usage / (1024 ** 3):.2f} GB of weights/venvs")
+    else:
+        print("model root: empty")
+    return 0
+
+
+# --------------------------------------------------------------------------
+# art
+# --------------------------------------------------------------------------
+ART_PRESETS = {
+    "character": ("characters", 768, 768, 28),
+    "enemy": ("enemies", 768, 768, 28),
+    "background": ("environments", 1024, 576, 28),
+    "prop": ("props", 512, 512, 24),
+    "ui": ("ui", 512, 512, 20),
+    "vfx": ("vfx", 512, 512, 24),
+    "texture": ("textures", 512, 512, 24),
+}
+
+
+def cmd_art(cfg: dict, args) -> int:
+    from bf_comfyui import ComfyUIAdapter, ComfyUIUnavailable
+
+    preset = args.preset
+    if preset not in ART_PRESETS:
+        print(f"unknown preset '{preset}'. Known: {', '.join(sorted(ART_PRESETS))}",
+              file=sys.stderr)
+        return 2
+    subdir, w, h, steps = ART_PRESETS[preset]
+
+    negative = ("blurry, lowres, watermark, signature, text, deformed, "
+                "extra limbs, cropped, jpeg artifacts, frame, border")
+    if preset == "background":
+        negative += ", characters, close-up"
+
+    comfy = ComfyUIAdapter(cfg)
+    out_dir = staging_root(cfg) / "art" / subdir
+    stem = f"{args.name or preset}"
+    dest = next_versioned(out_dir, stem, ".png")
+
+    print(f"Art generation via ComfyUI ({comfy.base_url})")
+    print(f"preset: {preset}  size: {w}x{h}  steps: {steps}  seed: {args.seed}")
+    try:
+        path = comfy.generate_image(
+            path_for(cfg, "comfyui.default_workflow"),
+            {
+                "6.text": args.prompt,
+                "7.text": negative,
+                "3.steps": steps,
+                "3.seed": args.seed,
+                "5.width": w,
+                "5.height": h,
+                "9.filename_prefix": f"beastforge/{stem}",
+            },
+            dest,
+        )
+    except ComfyUIUnavailable as exc:
+        print(f"\nComfyUI unavailable: {exc}", file=sys.stderr)
+        return 1
+    print(f"\nwrote {path}")
+    print(f"review it, then: ai-studio promote {path} --category art/{subdir}")
+    return 0
+
+
+# --------------------------------------------------------------------------
+# music
+# --------------------------------------------------------------------------
+def cmd_music(cfg: dict, args) -> int:
+    from bf_acestep import ACEStepAdapter, ACEStepUnavailable, MUSIC_PRESETS
+
+    if args.request:
+        spec = json.loads(Path(args.request).read_text())
+    else:
+        if args.preset not in MUSIC_PRESETS:
+            print(f"unknown preset '{args.preset}'. Known: "
+                  f"{', '.join(sorted(MUSIC_PRESETS))}", file=sys.stderr)
+            return 2
+        spec = dict(MUSIC_PRESETS[args.preset])
+        if args.duration:
+            spec["duration"] = args.duration
+    spec.setdefault("title", args.preset)
+
+    ace = ACEStepAdapter(cfg)
+    dest = next_versioned(staging_root(cfg) / "audio" / "music",
+                          spec["title"].lower().replace(" ", "_"), ".wav")
+    print(f"Music generation via ACE-Step ({ace.api_url})")
+    try:
+        path = ace.generate(spec, dest)
+    except ACEStepUnavailable as exc:
+        print(f"\nACE-Step unavailable: {exc}", file=sys.stderr)
+        return 1
+    print(f"\nwrote {path}")
+    print(f"review it, then: ai-studio promote {path} --category audio/music")
+    return 0
+
+
+# --------------------------------------------------------------------------
+# voice
+# --------------------------------------------------------------------------
+def cmd_voice(cfg: dict, args) -> int:
+    from bf_voice import TTSUnavailable, VOICE_PRESETS, pick_engine, wav_duration
+
+    # Resolve the engine first: voice ids are engine-specific, and the preset
+    # voices are Kokoro names that Piper has never heard of.
+    try:
+        adapter, used = pick_engine(cfg, args.engine)
+    except TTSUnavailable as exc:
+        print(f"Voice generation (engine={args.engine})\n\n{exc}", file=sys.stderr)
+        return 1
+    print(f"Voice generation (engine={used})")
+
+    if args.request:
+        req = json.loads(Path(args.request).read_text())
+        text = " ".join(req.get("lines", [])) if "lines" in req else req["text"]
+        label = req.get("character", "line").lower().replace(" ", "_")
+        voice = args.voice or (req.get("voice") if used == "kokoro" else None)
+    elif args.preset in VOICE_PRESETS:
+        p = VOICE_PRESETS[args.preset]
+        text = " ".join(p["lines"])
+        label = p["character"].lower().replace(" ", "_")
+        # Only honour the preset's Kokoro voice when Kokoro is actually driving;
+        # otherwise fall back to the engine's own configured default.
+        voice = args.voice or (p["voice"] if used == "kokoro" else None)
+    else:
+        text = args.text
+        label = "line"
+        voice = args.voice
+    if not text:
+        print("nothing to say: pass --text, --preset or --request", file=sys.stderr)
+        return 2
+
+    dest = next_versioned(staging_root(cfg) / "voice" / used,
+                          label.replace("_", "-"), ".wav")
+    try:
+        path = adapter.synthesize(text, dest, voice=voice)
+    except TTSUnavailable as exc:
+        print(f"\n{exc}", file=sys.stderr)
+        return 1
+    print(f"\nengine   {used} ({adapter.name})")
+    print(f"text     {text[:70]}")
+    print(f"wrote    {path}  ({wav_duration(path):.1f}s)")
+    print(f"review it, then: ai-studio promote {path} --category voice/{used}")
+    return 0
+
+
+# --------------------------------------------------------------------------
+# test
+# --------------------------------------------------------------------------
+def cmd_test(cfg: dict, args) -> int:
+    qa = STUDIO_DIR / "qa" / "playwright"
+    runner = qa / "run.js"
+    if args.setup:
+        print("installing Playwright (downloads a Chromium build)...")
+        if not (qa / "package.json").exists():
+            print(f"error: {qa / 'package.json'} is missing", file=sys.stderr)
+            return 1
+        r = subprocess.run(["npm", "install"], cwd=qa)
+        if r.returncode != 0:
+            return r.returncode
+        return subprocess.run([str(qa / "node_modules" / ".bin" / "playwright"),
+                               "install", "chromium"], cwd=qa).returncode
+    if not runner.exists():
+        print(f"error: {runner} missing", file=sys.stderr)
+        return 1
+    env = dict(os.environ)
+    # Only export BF_QA_BASE_URL when the caller explicitly names a server.
+    # run.js treats its presence as "a server is already running" and will not
+    # start its own, so passing the config default here breaks every test.
+    if args.base_url:
+        env["BF_QA_BASE_URL"] = args.base_url
+    env["BF_QA_HEADED"] = "1" if (args.headed or cfg["qa"].get("headed")) else "0"
+    return subprocess.run(["node", str(runner)], cwd=qa, env=env).returncode
+
+
+# --------------------------------------------------------------------------
+# promote
+# --------------------------------------------------------------------------
+def cmd_promote(cfg: dict, args) -> int:
+    src = Path(args.path).resolve()
+    if not src.exists():
+        print(f"error: {src} does not exist", file=sys.stderr)
+        return 1
+    # category looks like "art/characters" or "audio/music" or "voice/kokoro"
+    category = args.category.rstrip("/")
+    if category.startswith("art/"):
+        dest_dir = path_for(cfg, "paths.asset_root") / "generated" / category
+    elif category.startswith("audio/"):
+        dest_dir = path_for(cfg, "paths.asset_root") / "generated" / category
+    elif category.startswith("voice/"):
+        dest_dir = path_for(cfg, "paths.asset_root") / "generated" / category
+    else:
+        dest_dir = path_for(cfg, "paths.asset_root") / "generated" / category
+
+    dest = promote(src, dest_dir, src.stem, src.suffix, force=args.force)
+    print(f"promoted -> {dest}")
+    if dest_dir.is_relative_to(path_for(cfg, "paths.asset_root")):
+        print("\nThe game does not auto-load these yet. Reference them from")
+        print("web/assets/manifest.json once you are happy with them.")
+    return 0
+
+
+# --------------------------------------------------------------------------
+def main(argv=None) -> int:
+    cfg = load_config()
+    ap = argparse.ArgumentParser(prog="ai-studio",
+                                 description="Beast Forge AI development toolkit")
+    sub = ap.add_subparsers(dest="cmd")
+
+    sub.add_parser("doctor", help="detect every engine").set_defaults(
+        func=cmd_doctor)
+    sub.add_parser("status", help="show config, paths, staged assets").set_defaults(
+        func=cmd_status)
+
+    p = sub.add_parser("art", help="generate art via ComfyUI")
+    p.add_argument("--prompt", required=True)
+    p.add_argument("--name")
+    p.add_argument("--preset", default="character", choices=sorted(ART_PRESETS))
+    p.add_argument("--seed", type=int, default=1)
+    p.set_defaults(func=cmd_art)
+
+    p = sub.add_parser("music", help="generate music via ACE-Step")
+    p.add_argument("--preset", default="menu")
+    p.add_argument("--request", help="JSON file with a structured request")
+    p.add_argument("--duration", type=int)
+    p.set_defaults(func=cmd_music)
+
+    p = sub.add_parser("voice", help="generate voice via Kokoro or Piper")
+    p.add_argument("--text")
+    p.add_argument("--preset", choices=["guardian", "commander", "smugglers", "enemy"])
+    p.add_argument("--request", help="JSON file with a structured request")
+    p.add_argument("--voice")
+    p.add_argument("--engine", default=cfg["voice"].get("engine", "auto"),
+                   choices=["auto", "kokoro", "piper"])
+    p.set_defaults(func=cmd_voice)
+
+    p = sub.add_parser("test", help="run the Playwright web QA suite")
+    p.add_argument("--setup", action="store_true", help="install Playwright first")
+    p.add_argument("--base-url")
+    p.add_argument("--headed", action="store_true")
+    p.set_defaults(func=cmd_test)
+
+    p = sub.add_parser("promote", help="copy a staged asset into the game")
+    p.add_argument("path")
+    p.add_argument("--category", required=True,
+                   help="e.g. art/characters, audio/music, voice/kokoro")
+    p.add_argument("--force", action="store_true",
+                   help="allow overwriting an identically named asset")
+    p.set_defaults(func=cmd_promote)
+
+    args = ap.parse_args(argv)
+    if not getattr(args, "func", None):
+        ap.print_help()
+        return 0
+    return args.func(cfg, args)
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        print("\ninterrupted", file=sys.stderr)
+        sys.exit(130)

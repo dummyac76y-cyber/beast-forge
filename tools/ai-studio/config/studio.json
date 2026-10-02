@@ -1,0 +1,73 @@
+{
+  "$comment": [
+    "Beast Forge AI Studio configuration.",
+    "Every path is resolved relative to the repository root unless absolute.",
+    "MODEL_ROOT deliberately defaults to a location OUTSIDE the repository and",
+    "outside /tmp: model weights are multi-GB, must never enter git, and /tmp is",
+    "wiped whenever the container is reset (this happened once already).",
+    "Override any value with the matching BF_* environment variable."
+  ],
+
+  "paths": {
+    "repo_root": ".",
+    "model_root": "~/.local/share/beast-forge-ai",
+    "staging_root": "tools/ai-studio/outputs",
+    "asset_root": "web/assets"
+  },
+
+  "comfyui": {
+    "$comment": "ComfyUI is used as a service. Install it yourself; see README.",
+    "url": "http://127.0.0.1:8188",
+    "install_dir": "~/.local/share/beast-forge-ai/ComfyUI",
+    "timeout_sec": 1800,
+    "poll_interval_sec": 3,
+    "default_workflow": "comfyui/workflows/text_to_image.json",
+    "checkpoints": [
+      "sd_turbo"
+    ]
+  },
+
+  "acestep": {
+    "$comment": "ACE-Step is a large text-to-music model. Strongly GPU-preferred.",
+    "install_dir": "~/.local/share/beast-forge-ai/ACE-Step",
+    "api_url": "http://127.0.0.1:8001",
+    "default_duration_sec": 60,
+    "sample_rate": 44100,
+    "output_format": "wav"
+  },
+
+  "kokoro": {
+    "$comment": "Kokoro is the primary TTS. Voice pack must be downloaded separately.",
+    "install_dir": "~/.local/share/beast-forge-ai/kokoro",
+    "voice": "af_heart",
+    "speed": 1.0,
+    "sample_rate": 24000
+  },
+
+  "piper": {
+    "$comment": "Piper is the lightweight fallback TTS. Voice ONNX models are small.",
+    "install_dir": "~/.local/share/beast-forge-ai/piper",
+    "voice": "en_US-lessac-medium",
+    "length_scale": 1.0,
+    "sample_rate": 22050
+  },
+
+  "voice": {
+    "$comment": "engine: auto | kokoro | piper. 'auto' prefers Kokoro, falls back to Piper.",
+    "engine": "auto"
+  },
+
+  "qa": {
+    "$comment": "Playwright drives the web build over a local static server.",
+    "base_url": "http://127.0.0.1:5173",
+    "serve_root": "web",
+    "timeout_ms": 30000,
+    "screenshot_on_failure": true,
+    "headed": false
+  },
+
+  "resource_notes": {
+    "$comment": "Informational thresholds used by 'ai-studio doctor' warnings.",
+    "cpu_only_warning": "No GPU detected. ComfyUI will run on CPU but image generation will be significantly slower (minutes per image rather than seconds). ACE-Step is impractical on CPU."
+  }
+}

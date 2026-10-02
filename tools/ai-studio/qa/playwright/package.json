@@ -1,0 +1,8 @@
+{
+  "name": "beast-forge-ai-studio-qa",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Automated web QA for the Beast Forge web build. CPU-only; no accounts or API keys.",
+  "scripts": { "test": "node run.js", "serve": "node server.js" },
+  "devDependencies": { "playwright": "^1.47.0" }
+}

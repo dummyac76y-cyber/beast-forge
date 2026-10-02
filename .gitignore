@@ -5,3 +5,40 @@ dex.py
 classes.txt
 dexstrings.txt
 manifest.xml
+
+# --- Beast Forge AI Studio (tools/ai-studio) -------------------------------
+# Model weights are multi-gigabyte and belong to the engines, not this repo.
+# They live under model_root (~/.local/share/beast-forge-ai) by default, but
+# guard the in-repo paths too in case someone points an engine here.
+# These extensions are unambiguous model formats, so they are safe globally.
+*.safetensors
+*.ckpt
+*.onnx
+*.onnx.json
+*.pth
+*.gguf
+*.ggml
+
+# .bin and .pt are NOT listed globally: the tracked Gradle state already uses
+# *.bin, and a future game asset could legitimately be either. Scoped instead.
+tools/ai-studio/**/*.bin
+tools/ai-studio/**/*.pt
+tools/ai-studio/**/*.pth
+
+# Generated assets are staged, reviewed, then promoted deliberately.
+tools/ai-studio/outputs/
+tools/ai-studio/comfyui/outputs/
+tools/ai-studio/qa/playwright/test-results/
+tools/ai-studio/qa/playwright/screenshots/
+tools/ai-studio/qa/playwright/report/
+
+# Engine checkouts and virtualenvs.
+tools/ai-studio/**/venv/
+tools/ai-studio/**/.venv/
+tools/ai-studio/models/
+node_modules/
+__pycache__/
+*.py[cod]
+
+# Local overrides may hold machine-specific paths.
+tools/ai-studio/config/local.json
