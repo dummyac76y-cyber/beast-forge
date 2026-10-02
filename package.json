@@ -1,0 +1,23 @@
+{
+  "name": "beast-forge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Beast Forge lane-defense strategy game: Android (Kotlin/Compose) and web (vanilla JS, WebGL + Canvas 2D) ports.",
+  "scripts": {
+    "doctor": "node tools/ai-studio/scripts/doctor.mjs",
+    "verify": "node tools/ai-studio/scripts/verify.mjs",
+    "qa": "node tools/ai-studio/qa/run-qa.mjs",
+    "assets": "node tools/ai-studio/scripts/generate-assets.mjs",
+    "assets:promote": "node tools/ai-studio/scripts/generate-assets.mjs --promote",
+    "serve": "node tools/ai-studio/qa/serve.mjs 8099",
+    "check": "npm run verify && npm run qa"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dummyac76y-cyber/beast-forge.git"
+  },
+  "license": "ISC",
+  "devDependencies": {
+    "playwright": "^1.63.0"
+  }
+}

@@ -5,3 +5,37 @@ dex.py
 classes.txt
 dexstrings.txt
 manifest.xml
+
+# AI Studio tooling (tools/ai-studio/): dependencies and regenerable output.
+node_modules/
+tools/ai-studio/*/outputs/
+tools/ai-studio/qa/shots/
+
+# Python virtualenvs and caches, should AI tooling add them.
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# AI model weights and caches. Never version these -- they are huge, and the
+# AI Studio must never require a download to build or run the game.
+*.safetensors
+*.ckpt
+*.pth
+*.pt
+*.gguf
+*.onnx
+*.bin
+model-cache/
+models/
+
+# Secrets. The origin remote URL contains an access token; keep it out of files.
+.env
+.env.*
+*.pem
+*.key
+
+# Gradle build cache. Note: 7 files under .gradle/ were committed before this
+# entry existed. They are still tracked -- untracking them is a separate,
+# deliberate decision rather than something to slip into a tooling commit.
+/.gradle/

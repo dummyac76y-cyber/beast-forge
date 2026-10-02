@@ -345,13 +345,15 @@
   function stopLoop() { if (rafId) cancelAnimationFrame(rafId); rafId = null; engine = null; }
 
   function onGameOver() {
-    stopLoop();
+    // stopLoop() nulls `engine`, so every value the summary needs has to be read
+    // out first -- otherwise the victory/defeat screen throws and never renders.
     const won = engine.isVictory;
     const arenaRun = battleMode === 'arena';
     const wave = engine.arenaWave, score = engine.arenaScore;
+    const st = engine.stageConfig;
+    stopLoop();
     if (arenaRun) { repo.recordArenaScore(wave); }
     else if (won) {
-      const st = engine.stageConfig;
       repo.addRewards(st.rewardCoins, st.rewardCrystals, true);
     }
     const host = $('#screen');
@@ -361,7 +363,6 @@
     if (arenaRun) {
       box.appendChild(el('p', 'sub', `Reached wave ${wave} · ${score} points`));
     } else {
-      const st = engine.stageConfig;
       box.appendChild(el('p', 'sub', won
         ? `+${st.rewardCoins} coins · +${st.rewardCrystals} crystals${st.bossCard ? ' · boss defeated' : ''}`
         : 'No rewards. Reinforce your armory and refine your deck.'));
