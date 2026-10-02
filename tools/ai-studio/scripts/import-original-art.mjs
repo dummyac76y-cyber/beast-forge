@@ -20,25 +20,33 @@ const REPO = path.resolve(HERE, '..', '..', '..');
 const SRC = path.join(REPO, 'extract/assets/gfx');
 const OUT = path.join(REPO, 'web/assets/beasts');
 
-// Which plist sheet each race's parts live in, and which original species name
-// backs each of the 12 catalog beasts. Catalog ids come from web/js/catalog.js;
-// every one of the twelve maps to exactly one painted species, so no beast
-// needs art generated for it.
+// Which plist sheet each race's parts live in, which original species name backs
+// each of the 12 catalog beasts, and which gameplay size category it reads as.
+//
+// Catalog ids come from web/js/catalog.js; every one of the twelve maps to
+// exactly one painted species, so no beast needs art generated for it.
+//
+// `size` is a gameplay intent, NOT a measurement. The twelve painted species
+// span a 3.1x aspect-ratio range (gorilla 0.70 to fire dragon 2.16), so
+// "scale every creature to the same height" alone produces a dragon that is
+// three times wider than a bear and dominates the board. The category is what
+// makes relative size deliberate. Keep these assignments -- they are the art
+// direction, not a computed value.
 export const SPECIES = {
-  biped_bear: { race: 'BIPED', sheet: 'biped', name: 'Brown bear' },
-  biped_werewolf: { race: 'BIPED', sheet: 'biped', name: 'Werewolf' },
-  biped_gorilla: { race: 'BIPED', sheet: 'biped', name: 'Gorilla' },
-  biped_lizard: { race: 'BIPED', sheet: 'biped', name: 'lizards' },
+  biped_bear: { race: 'BIPED', sheet: 'biped', name: 'Brown bear', size: 'MEDIUM' },
+  biped_werewolf: { race: 'BIPED', sheet: 'biped', name: 'Werewolf', size: 'SMALL' },
+  biped_gorilla: { race: 'BIPED', sheet: 'biped', name: 'Gorilla', size: 'SMALL' },
+  biped_lizard: { race: 'BIPED', sheet: 'biped', name: 'lizards', size: 'MEDIUM' },
 
-  quad_tiger: { race: 'QUADRUPED', sheet: 'quad', name: 'tiger' },
-  quad_lion: { race: 'QUADRUPED', sheet: 'quad', name: 'Lion' },
-  quad_rhino: { race: 'QUADRUPED', sheet: 'quad', name: 'rhinoceros' },
-  quad_hippo: { race: 'QUADRUPED', sheet: 'quad', name: 'Hippo' },
+  quad_tiger: { race: 'QUADRUPED', sheet: 'quad', name: 'tiger', size: 'MEDIUM' },
+  quad_lion: { race: 'QUADRUPED', sheet: 'quad', name: 'Lion', size: 'LARGE' },
+  quad_rhino: { race: 'QUADRUPED', sheet: 'quad', name: 'rhinoceros', size: 'MEDIUM' },
+  quad_hippo: { race: 'QUADRUPED', sheet: 'quad', name: 'Hippo', size: 'LARGE' },
 
-  dragon_fire: { race: 'DRAGON', sheet: 'dragon', name: 'Fire Dragon' },
-  dragon_ice: { race: 'DRAGON', sheet: 'dragon', name: 'Ice Dragon' },
-  dragon_desert: { race: 'DRAGON', sheet: 'dragon', name: 'Desert Dragon' },
-  dragon_swamp: { race: 'DRAGON', sheet: 'dragon', name: 'Swamp dragon' },
+  dragon_fire: { race: 'DRAGON', sheet: 'dragon', name: 'Fire Dragon', size: 'LARGE' },
+  dragon_ice: { race: 'DRAGON', sheet: 'dragon', name: 'Ice Dragon', size: 'MASSIVE' },
+  dragon_desert: { race: 'DRAGON', sheet: 'dragon', name: 'Desert Dragon', size: 'LARGE' },
+  dragon_swamp: { race: 'DRAGON', sheet: 'dragon', name: 'Swamp dragon', size: 'MASSIVE' },
 };
 
 // Parts we keep, per race, in draw order. Naming is consistent across sheets:
@@ -179,7 +187,11 @@ function main() {
         // anchors joints on painted pixels, not on the padded box.
         map[p.part] = [slot.x, slot.y, p.width, p.height, ...tightBounds(atlas, w, slot, p)];
       }
-      meta[beast.cardId] = { race: beast.spec.race, species: beast.spec.name, sheet, parts: map };
+      meta[beast.cardId] = {
+        race: beast.spec.race, species: beast.spec.name,
+        size: beast.spec.size || 'MEDIUM',
+        sheet, parts: map
+      };
       allBeasts[beast.cardId] = meta[beast.cardId];
     }
 

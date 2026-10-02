@@ -229,3 +229,102 @@ overwrite in place. The importers refuse to repoint an existing key without
 
 Creature parts: `beasts/beasts_<sheet>_v001.png` + `parts_v001.json` sidecar.
 Scenes: `scenes/<name>_v001.jpg`. Fortresses: `forts/forts_v001.png`.
+
+---
+
+## 13. Battlefield art direction (2D)
+
+Added after the battle screen was found to read as "a photo with stickers on
+it". The rules below are enforced by `npm run verify` (offline layout audit)
+and `npm run qa` (live pixel measurement), not just documented.
+
+### Depth layering
+
+The painted backdrops are finished, full-contrast illustrations. Drawn raw they
+become the subject of the frame and beasts read as stickers. So the backdrop is
+graded back and the playfield is graded forward:
+
+| Layer | Treatment |
+|---|---|
+| Backdrop | 34% desaturation, cool dark wash heaviest in the sky, vanishing by the horizon |
+| Horizon | Thin warm haze band at `FIELD_TOP` so ground separates from backdrop |
+| Playfield | Darkened plate, soft-edged, so units have a calm ground |
+| Lanes | Alternating tint + engraved groove with a warm upper lip |
+| Units / forts | Untouched — full contrast and saturation |
+
+Measured effect: backdrop sky sd 42 → 27, lane boundary edge strength ~0 → 35-52,
+adjacent-lane mean difference ~0 → 9-23.
+
+The grade strength is a judgement call, not a measured optimum. It cannot be
+tuned by eye in this environment, so it is a named parameter in
+`Renderer.drawDepthGrade()` and the acceptance tests only assert that the
+backdrop still carries real detail (sky sd > threshold) and that lanes stay
+readable.
+
+### Lanes
+
+Five lanes must be countable at a glance **without** looking like five UI
+rectangles. The construction:
+
+- alternating fill at ±0.04..0.14 alpha (mean luminance differs by 9-23);
+- an engraved groove (0.52 black) with a warm upper lip (0.17) at every
+  boundary, sized in virtual units so its weight is scale-independent;
+- the plate's alpha fades to zero at both ends so the band has no hard edge;
+- the active lane gets a warm gradient plus deploy chevrons at both ends.
+
+Rejected: the previous translucent full-width rectangles with 1px strokes.
+
+### Unit scale
+
+`UNIT_BASE_HEIGHT = 0.72` of one lane for a MEDIUM beast, then the size
+category multiplies it: SMALL 0.74, MEDIUM 1.00, LARGE 1.14, MASSIVE 1.30.
+
+Measured resulting heights: 29.3 / 39.6 / 44.9 / 51.5 virtual units — strictly
+increasing by category, as the audit asserts.
+
+A hard width budget of `MAX_FOOTPRINT_X = 1.15` lane heights caps any creature
+that would otherwise sprawl. Two quadrupeds sit exactly on that limit; the audit
+reports a shortfall only above 5%, so a 2% clamp is a limit doing its job.
+
+### Size categories are art direction
+
+`size` lives in `SPECIES` in `tools/ai-studio/scripts/import-original-art.mjs`
+and is a deliberate assignment, not a measurement. The twelve painted species
+span a 3.1x aspect-ratio range (gorilla 0.70 to fire dragon 2.16); without
+categories, "same height everywhere" produces a dragon three times wider than a
+bear. Do not derive `size` from the art's dimensions — that would re-create the
+problem.
+
+### The tail is the width problem
+
+The source tail sprite is nearly as wide as the whole body (hippo 68px tail on a
+105px body; dragon 157px on 133px). Slung straight back it doubled every
+quadruped's bounding box and forced the width budget to shrink them below their
+category. `LAYOUT.*.tail_1.x` now overlaps the tail back under the rump. This is
+a rig fix; do not paper over it with per-sprite scale values.
+
+### Fortresses
+
+One scale factor per side, derived from that side's **tallest** damage frame, is
+reused for every damage state, and every frame is anchored at its base line. A
+shorter ruin therefore draws shorter — which is what a collapsing castle should
+do. Scaling each frame to a common *height* instead magnified the ruined frame
+(291px vs 480px source) so a battered castle rendered larger than an intact one.
+
+The fortress HP bar is placed from the fortress's actual drawn top, so it
+descends with the castle as it collapses.
+
+### Health bars
+
+`drawUnitBars` takes the unit's actual drawn width and height. Width is clamped
+to 20-34 virtual units so a MASSIVE dragon gets a proportionate bar and a SMALL
+goblin gets a readable one. The bar hangs `UNIT_BAR_GAP` (5) above the head with
+zero dependence on any nominal sprite size.
+
+### Rejected direction: photoreal backdrops
+
+Photographic or photorealistic backdrops are not permitted. The measured edge
+density of the six current scenes is 4.2-9.6 (calm-to-busy painted), so as
+imported they are not photographic; the "photo" impression came from the raw
+backdrop contrast plus the old lane rectangles, both of which are now fixed by
+grading and lane construction rather than by replacing art.

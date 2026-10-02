@@ -52,7 +52,13 @@ const LAYOUT = {
   QUADRUPED: {
     order: ORDER.QUADRUPED,
     parts: {
-      tail_1: { at: 'body', x: 0.02, y: 0.18 },
+      // The tail sprite in the source sheet is nearly as wide as the whole
+      // body (hippo: 68px tail on a 105px body). Slung straight back it doubles
+      // the creature's bounding box, which forced the width budget to shrink
+      // every quadruped below its size category. Overlapping it back under the
+      // rump keeps the tail clearly readable while giving the silhouette a
+      // sane footprint -- a rig fix rather than a per-sprite scale fudge.
+      tail_1: { at: 'body', x: 0.24, y: 0.20 },
       Hind_leg_R_1: { at: 'body', x: 0.22, y: 0.55 },
       Hind_leg_L_1: { at: 'body', x: 0.02, y: 0.55 },
       Hind_foot_R: { below: 'Hind_leg_R_1', x: 0.26 },
@@ -68,7 +74,9 @@ const LAYOUT = {
   DRAGON: {
     order: ORDER.DRAGON,
     parts: {
-      tail_1: { at: 'body', x: 0.00, y: 0.20 },
+      // See QUADRUPED: the dragon tail sprite is 157px wide on a 133px body, so it
+      // has to tuck under the rump or the whole creature sprawls.
+      tail_1: { at: 'body', x: 0.18, y: 0.20 },
       Hind_leg_R_1: { at: 'body', x: 0.24, y: 0.60 },
       Hind_leg_L_1: { at: 'body', x: 0.04, y: 0.60 },
       Hind_foot_R: { below: 'Hind_leg_R_1', x: 0.28 },
@@ -202,7 +210,7 @@ class BeastRig {
     this.cache = new Map();
   }
 
-  /** @returns {null | {img, race, species, nodes, body, width, height}} */
+  /** @returns {null | {img, race, species, size, nodes, body, width, height}} */
   get(cardId) {
     if (this.cache.has(cardId)) return this.cache.get(cardId);
     const found = this.assets && this.assets.beastParts
@@ -212,10 +220,35 @@ class BeastRig {
       const [, , bw, bh] = found.parts.body;
       const solved = resolveLayout(found.race, found.parts, bw, bh);
       if (solved) rig = { img: found.img, race: found.race, species: found.species,
-        nodes: solved.nodes, body: solved.body, width: solved.width, height: solved.height };
+        size: found.size || 'MEDIUM', nodes: solved.nodes, body: solved.body,
+        width: solved.width, height: solved.height };
     }
     this.cache.set(cardId, rig);
     return rig;
+  }
+
+  /**
+   * How this creature should be scaled into its lane, and how big that makes it.
+   *
+   * Delegates to BattleConfig.fitUnit so the renderer and the offline audit
+   * cannot disagree, and returns the drawn WIDTH and HEIGHT alongside the
+   * scale -- the caller needs those to place health bars above the actual head
+   * instead of guessing from a nominal sprite size.
+   *
+   * Returns null for an unknown card, which the caller must treat as "draw the
+   * fallback", never as "scale 0".
+   */
+  footprint(cardId) {
+    const rig = this.get(cardId);
+    if (!rig) return null;
+    const cfg = (typeof globalThis !== 'undefined' && globalThis.BeastForgeBattle) || null;
+    if (!cfg || !cfg.fitUnit) return null;
+    const fit = cfg.fitUnit(rig.width, rig.height, rig.size);
+    return {
+      rig, size: rig.size,
+      scale: fit.scale, width: fit.w, height: fit.h,
+      widthClamped: fit.widthClamped
+    };
   }
 
   /**
@@ -279,4 +312,7 @@ class BeastRig {
 // Classic <script> order in index.html means the browser picks this up via the
 // global; Node picks it up through module.exports. Declared last either way.
 if (typeof module !== 'undefined' && module.exports) module.exports = { BeastRig, LAYOUT, resolveLayout };
-if (typeof globalThis !== 'undefined') globalThis.__beastForgeRig = { BeastRig, LAYOUT, resolveLayout };
+if (typeof globalThis !== 'undefined') globalThis.__beastForgeRig = { BeastRig, LAYOUT, resolveLayout, footprintOf: (id, cfg) => {
+  const r = new BeastRig(globalThis.__beastForgeAssets);
+  return r.footprint(id);
+} };

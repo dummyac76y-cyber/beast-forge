@@ -365,7 +365,7 @@ class AssetStore {
       // its sheet, so the key tells us which atlas actually holds the pixels.
       if (b && b.sheet === key.replace(/^beasts_/, '')) {
         this.stats.beastHits++;
-        return { img: atlas.img, parts: b.parts, race: b.race, species: b.species };
+        return { img: atlas.img, parts: b.parts, race: b.race, species: b.species, size: b.size };
       }
     }
     this.stats.beastMisses++;

@@ -9,6 +9,11 @@
 //   Color(0xAARRGGBB)  -> '#RRGGBB'
 'use strict';
 
+// Battlefield geometry comes from battle-config.js in the browser and from the
+// module directly under Node (the headless battle sim runs here).
+const BATTLE = (typeof globalThis !== 'undefined' && globalThis.BeastForgeBattle)
+  || (typeof require !== 'undefined' ? require('./battle-config.js') : null);
+
 if (typeof require !== 'undefined' && typeof module !== 'undefined') {
   var M = require('./models.js');
   var CAT = require('./catalog.js');
@@ -34,7 +39,6 @@ function maxBy(arr, sel) {
   return best;
 }
 
-const FORTRUIN_X_PLAYER = 70, FORTRUIN_X_ENEMY = 930;
 
 class BattleEngine {
   constructor(stageConfig, playerProfile, soundManager, isArenaMode) {
@@ -134,7 +138,7 @@ class BattleEngine {
       name: c.name, species: c.species, race: c.race, element: c.element, tier: c.tier,
       maxHp: cardHp(c), currentHp: cardHp(c), atk: cardAtk(c),
       attackSpeed: c.attackSpeed, moveSpeed: c.moveSpeed, range: c.range, isRanged: isRanged(c),
-      laneIndex, position: 920,
+      laneIndex, position: BATTLE.playerFrontLine(),
       state: 'MARCHING', attackTimer: 0, stateTimer: 0,
       burnTimer: 0, frozenTimer: 0, poisonedTimer: 0
     });
@@ -155,7 +159,7 @@ class BattleEngine {
       name: c.name, species: c.species, race: c.race, element: c.element, tier: c.tier,
       maxHp: cardHp(c), currentHp: cardHp(c), atk: cardAtk(c),
       attackSpeed: c.attackSpeed, moveSpeed: c.moveSpeed, range: c.range, isRanged: isRanged(c),
-      laneIndex, position: 80,
+      laneIndex, position: BATTLE.enemyFrontLine(),
       state: 'MARCHING', attackTimer: 0, stateTimer: 0,
       burnTimer: 0, frozenTimer: 0, poisonedTimer: 0
     });
@@ -172,10 +176,10 @@ class BattleEngine {
       const damage = 220 + this.playerProfile.turretLevel * 45;
       enemy.currentHp -= damage;
       this.addFloatingText('-' + Math.trunc(damage) + ' CRIT!', enemy.position, this.getLaneY(enemy.laneIndex) - 20, '#FF1744');
-      this.spawnExplosionParticles(enemy.position, this.getLaneY(enemy.laneIndex), '#FF5722', 15);
+      this.spawnExplosionParticles(enemy.position, this.getLaneY(enemy.laneIndex), '#FF5722', 15, null);
     }
     this.enemyFort.currentHp = Math.max(this.enemyFort.currentHp - 250, 0);
-    this.addFloatingText('-250 FORT HIT!', 920, 180, '#FF3D00');
+    this.addFloatingText('-250 FORT HIT!', BATTLE.FORT_ENEMY.x, 180, '#FF3D00');
     return true;
   }
 
@@ -190,7 +194,7 @@ class BattleEngine {
         p.attackTimer = Math.max(p.attackTimer - dt, 0);
         const leadEnemy = eUnits.find(e => e.position > p.position) || null;
         const distToEnemy = leadEnemy ? leadEnemy.position - p.position : Number.MAX_VALUE;
-        const distToFort = 920 - p.position;
+        const distToFort = BATTLE.playerFrontLine() - p.position;
 
         if (distToEnemy <= p.range) {
           p.state = 'ATTACKING';
@@ -201,7 +205,7 @@ class BattleEngine {
         } else {
           p.state = 'MARCHING';
           const nextPos = p.position + p.moveSpeed * dt;
-          const maxAllowed = leadEnemy ? leadEnemy.position - 25 : 920;
+          const maxAllowed = leadEnemy ? leadEnemy.position - 25 : BATTLE.playerFrontLine();
           p.position = Math.min(nextPos, maxAllowed);
         }
       }
@@ -211,7 +215,7 @@ class BattleEngine {
         e.attackTimer = Math.max(e.attackTimer - dt, 0);
         const leadPlayer = pUnits.find(p => p.position < e.position) || null;
         const distToPlayer = leadPlayer ? e.position - leadPlayer.position : Number.MAX_VALUE;
-        const distToFort = e.position - 80;
+        const distToFort = e.position - BATTLE.enemyFrontLine();
 
         if (distToPlayer <= e.range) {
           e.state = 'ATTACKING';
@@ -222,7 +226,7 @@ class BattleEngine {
         } else {
           e.state = 'MARCHING';
           const nextPos = e.position - e.moveSpeed * dt;
-          const minAllowed = leadPlayer ? leadPlayer.position + 25 : 80;
+          const minAllowed = leadPlayer ? leadPlayer.position + 25 : BATTLE.enemyFrontLine();
           e.position = Math.max(nextPos, minAllowed);
         }
       }
@@ -261,7 +265,7 @@ class BattleEngine {
       const textColor = isCrit ? '#FFD600' : '#FFFFFF';
       const textStr = (isCrit ? Math.trunc(damage) + '!' : '' + Math.trunc(damage));
       this.addFloatingText(textStr, target.position, y - 25, textColor);
-      this.spawnHitParticles(target.position, y, M.ELEMENT[attacker.element].color);
+      this.spawnHitParticles(target.position, y, M.ELEMENT[attacker.element].color, attacker.element);
       this.playElementSound(attacker.element);
     }
   }
@@ -270,9 +274,9 @@ class BattleEngine {
     const y = this.getLaneY(lane);
     const damage = attacker.atk;
     targetFort.currentHp = Math.max(targetFort.currentHp - damage, 0);
-    const fortX = isEnemyFort ? 940 : 60;
+    const fortX = isEnemyFort ? BATTLE.FORT_ENEMY.x : BATTLE.FORT_PLAYER.x;
     this.addFloatingText('-' + Math.trunc(damage), fortX, y - 15, '#FF5252');
-    this.spawnHitParticles(fortX, y, M.ELEMENT[attacker.element].color);
+    this.spawnHitParticles(fortX, y, M.ELEMENT[attacker.element].color, attacker.element);
     this.playElementSound(attacker.element);
   }
 
@@ -284,7 +288,7 @@ class BattleEngine {
       if (target) {
         this.projectiles.push({
           id: this.nextId++, isPlayer: true, laneIndex: target.laneIndex,
-          currentX: 70, currentY: 120, targetX: target.position, targetY: this.getLaneY(target.laneIndex),
+          currentX: BATTLE.FORT_PLAYER.x + 8, currentY: 120, targetX: target.position, targetY: this.getLaneY(target.laneIndex),
           speed: 450, damage: this.playerFort.turretAtk, element: 'LIGHTNING', isTurret: true
         });
         this.playerFort.turretTimer = this.playerFort.turretCooldown;
@@ -294,11 +298,11 @@ class BattleEngine {
     // Enemy turret: targets the player unit that has pushed deepest.
     this.enemyFort.turretTimer = Math.max(this.enemyFort.turretTimer - dt, 0);
     if (this.enemyFort.turretTimer <= 0) {
-      const target = maxBy(this.playerUnits.filter(u => u.position >= 1000 - this.enemyFort.turretRange), u => u.position);
+      const target = maxBy(this.playerUnits.filter(u => u.position >= BATTLE.BATTLEFIELD_W - this.enemyFort.turretRange), u => u.position);
       if (target) {
         this.projectiles.push({
           id: this.nextId++, isPlayer: false, laneIndex: target.laneIndex,
-          currentX: 930, currentY: 120, targetX: target.position, targetY: this.getLaneY(target.laneIndex),
+          currentX: BATTLE.FORT_ENEMY.x - 8, currentY: 120, targetX: target.position, targetY: this.getLaneY(target.laneIndex),
           speed: 450, damage: this.enemyFort.turretAtk, element: 'FIRE', isTurret: true
         });
         this.enemyFort.turretTimer = this.enemyFort.turretCooldown;
@@ -326,7 +330,7 @@ class BattleEngine {
           this.addFloatingText(isCrit ? Math.trunc(damage) + ' CRIT!' : '' + Math.trunc(damage),
             hitUnit.position, this.getLaneY(p.laneIndex) - 25, isCrit ? '#FFD54F' : '#FFFFFF');
         }
-        this.spawnExplosionParticles(p.targetX, p.targetY, M.ELEMENT[p.element].color, 8);
+        this.spawnExplosionParticles(p.targetX, p.targetY, M.ELEMENT[p.element].color, 8, p.element);
         if (p.isTurret) this.play('fire_explode');
       } else {
         p.currentX += (dx / dist) * step;
@@ -352,33 +356,41 @@ class BattleEngine {
     if (this.enemyFort.currentHp <= 0 && !this.isGameOver) {
       this.isGameOver = true; this.isVictory = true;
       this.play('fort_ruin'); this.play('victory');
-      this.spawnExplosionParticles(FORTRUIN_X_ENEMY, 200, '#FF5722', 40);
+      this.spawnExplosionParticles(BATTLE.FORT_ENEMY.x, 200, '#FF5722', 40, 'FIRE');
     } else if (this.playerFort.currentHp <= 0 && !this.isGameOver) {
       this.isGameOver = true; this.isVictory = false;
       this.play('fort_ruin'); this.play('defeat');
-      this.spawnExplosionParticles(FORTRUIN_X_PLAYER, 200, '#FF1744', 40);
+      this.spawnExplosionParticles(BATTLE.FORT_PLAYER.x, 200, '#FF1744', 40, 'FIRE');
     }
   }
 
   addFloatingText(text, x, y, color) {
     this.floatingTexts.push({ id: this.nextId++, text, x, y, color, life: 0.8, maxLife: 0.8 });
   }
-  _burst(x, y, color, count, speedLo, speedHi, sizeLo, sizeHi, life) {
+  /**
+   * `element` travels with the particle so the renderer can draw a shape that
+   * matches the element. Without it every impact fell back to the same generic
+   * dot and fire, ice and lightning were indistinguishable on the board.
+   */
+  _burst(x, y, color, count, speedLo, speedHi, sizeLo, sizeHi, life, element) {
     for (let i = 0; i < count; i++) {
       const angle = Math.random() * Math.PI * 2;
       const speed = Math.random() * (speedHi - speedLo) + speedLo;
       this.particles.push({
         x, y,
         vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
-        color, size: Math.random() * (sizeHi - sizeLo) + sizeLo,
+        color, element: element || null,
+        size: Math.random() * (sizeHi - sizeLo) + sizeLo,
         life, maxLife: life
       });
     }
   }
-  spawnSummonVfx(x, lane, color)   { this._burst(x, this.getLaneY(lane), color, 12, 30, 150, 4, 10, 0.5); }
-  spawnHitParticles(x, y, color)   { this._burst(x, y, color, 6, 20, 110, 3, 7, 0.35); }
-  spawnExplosionParticles(x, y, c, n) { this._burst(x, y, c, n, 50, 270, 4, 12, 0.7); }
-  spawnDeathVfx(x, lane)           { this.spawnExplosionParticles(x, this.getLaneY(lane), '#616161', 10); }
+  spawnSummonVfx(x, lane, color, element) { this._burst(x, this.getLaneY(lane), color, 12, 30, 150, 4, 10, 0.5, element); }
+  spawnHitParticles(x, y, color, element)  { this._burst(x, y, color, 6, 20, 110, 3, 7, 0.35, element); }
+  spawnExplosionParticles(x, y, c, n, element) { this._burst(x, y, c, n, 50, 270, 4, 12, 0.7, element); }
+  // A death is ash and dust, never elemental: the creature is gone, so there is
+  // no element to read.
+  spawnDeathVfx(x, lane) { this._burst(x, this.getLaneY(lane), '#8d7b6a', 10, 50, 270, 4, 12, 0.7, null); }
 
   playDeathSound(race) {
     const s = { BIPED: 'biped_die', QUADRUPED: 'quad_die', DRAGON: 'dragon_die' }[race];
@@ -390,8 +402,11 @@ class BattleEngine {
   }
 
   getLaneY(laneIndex) {
-    const laneStart = 110, laneHeight = 55;
-    return laneStart + laneIndex * laneHeight + laneHeight * 0.5;
+    // Delegates to the shared battlefield config. These two numbers used to be
+    // literals here AND in render.js; a change to one silently desynced lane
+    // maths from the hit test, and units rendered in a different lane than the
+    // one that was clicked.
+    return BATTLE.laneGroundY(laneIndex);
   }
 }
 

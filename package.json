@@ -5,7 +5,8 @@
   "description": "Beast Forge lane-defense strategy game: Android (Kotlin/Compose) and web (vanilla JS, WebGL + Canvas 2D) ports.",
   "scripts": {
     "doctor": "node tools/ai-studio/scripts/doctor.mjs",
-    "verify": "node tools/ai-studio/scripts/verify.mjs",
+    "verify": "node tools/ai-studio/scripts/verify.mjs && node tools/ai-studio/scripts/audit-battle-layout.mjs && node tools/ai-studio/scripts/measure-atlas-bounds.mjs",
+    "layout": "node tools/ai-studio/scripts/audit-battle-layout.mjs",
     "qa": "node tools/ai-studio/qa/run-qa.mjs",
     "assets": "node tools/ai-studio/scripts/generate-assets.mjs",
     "assets:promote": "node tools/ai-studio/scripts/generate-assets.mjs --promote",

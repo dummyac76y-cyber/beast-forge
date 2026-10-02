@@ -257,3 +257,103 @@ defects compounded it: `AssetStore`'s base path was built as `'assets//'`
 whenever no explicit base was passed, and scene records dropped `file` entirely.
 Both are fixed at the source, and `sceneUrl()` is the single accessor so the
 same mistake cannot recur in the next screen. See `BUG_MEMORY.md`.
+
+---
+
+## D13 — One `battle-config.js` owns all battlefield geometry
+
+**Date:** 2026-10-02
+
+**Decision:** lane count, lane start/height, field band, unit base height, size
+categories, width budget, bar geometry, fortress placement and the front lines
+all live in `web/js/battle-config.js`.
+
+**Why:** the lane constants were literals in `render.js` *and* again inside
+`engine.js`'s `getLaneY()`. Nothing tied them together, so a change to one
+silently desynced the lane maths from the click hit test — the exact failure mode
+where a unit renders in a different lane than the one the player clicked. There
+are now no lane literals outside the config; `grep` will confirm.
+
+**Also:** the file is IIFE-wrapped. A classic `<script>` shares one global
+lexical scope, so top-level `const LANE_START` here collided with render.js's
+and threw at load. See `BUG_MEMORY.md`.
+
+---
+
+## D14 — Beast size is a gameplay category, not a measurement
+
+**Date:** 2026-10-02
+
+**Decision:** each of the twelve species gets a `size` (SMALL/MEDIUM/LARGE/
+MASSIVE) assigned in the importer's `SPECIES` table. `CFG.fitUnit` scales to
+`UNIT_BASE_HEIGHT * laneHeight * category`, then clamps to a width budget.
+
+**Why:** the painted species span a 3.1x aspect-ratio range (gorilla 0.70 to
+fire dragon 2.16). The old renderer normalised every creature to the same
+*height*, which made a dragon ~3x wider than a bear and let it sprawl across
+neighbouring lanes. Categories make relative size intentional, and the resulting
+heights (29.3 / 39.6 / 44.9 / 51.5) are strictly increasing, which the audit
+asserts.
+
+**Explicitly rejected:** deriving `size` from the art's own dimensions. That
+would restore exactly the accident-of-proportion problem the categories exist to
+remove. The table is art direction; treat it as hand-set.
+
+---
+
+## D15 — The width clamp reports a layout defect instead of shrinking silently
+
+**Date:** 2026-10-02
+
+**Decision:** `CFG.fitUnit` clamps width to 1.15 lane heights and returns
+`widthClamped`. `audit-battle-layout.mjs` fails only when the clamp costs more
+than 5% of the creature's category height.
+
+**Why:** the clamp is a safety limit, not the primary sizing rule. A 2% clamp
+means the limit did its job; a 30% clamp means the rig layout is genuinely too
+wide and the layout needs fixing. Failing on any clamp at all would have made
+the audit cry wolf on a 2% trim.
+
+This is how the oversized tail was found: the dragon tail sprite is 157px wide
+on a 133px body, and slung straight back it doubled every quadruped's bounding
+box. Fixed in `LAYOUT` by tucking the tail under the rump — a rig fix, not a
+per-sprite scale.
+
+---
+
+## D16 — Backdrops are graded back, the playfield is graded forward
+
+**Date:** 2026-10-02
+
+**Decision:** `Renderer.drawDepthGrade()` applies a 34% desaturation and a cool
+dark wash (heaviest in the sky, vanishing at the horizon) to the backdrop
+before the playfield plate is drawn. Units and forts are not graded.
+
+**Why:** the complaint was "photographic background with cartoon sprites". The
+backdrops are not photographic — measured edge density is 4.2-9.6, i.e. calm
+painted art — but at full contrast they *are* the subject of the frame, and a
+beast over them reads as a sticker. Depth grading is how 2D games solve this
+without repainting assets: background low-contrast and cool, gameplay
+high-contrast and warm.
+
+**Not decided:** the exact grade strength. It cannot be judged by eye in this
+environment, so it is a named parameter rather than a tuned constant, and the
+tests assert only that the backdrop still carries real detail and that lanes
+stay readable. Revisit with a human looking at the screen.
+
+---
+
+## D17 — Fortresses use one scale per side, anchored at the base
+
+**Date:** 2026-10-02
+
+**Decision:** one scale factor per fortress side, derived from that side's
+tallest damage frame and reused for all three states. Every frame is anchored at
+its base line. The HP bar is placed from the drawn top.
+
+**Why:** scaling each frame to a common target height inverted the damage
+states. The ruined enemy frame is 291px tall where the intact one is 480px, so
+equalising heights *magnified* the ruin by 1.65x — a battered castle rendered
+taller and fatter than a pristine one. Anchoring at the base and sharing a scale
+makes a shorter source frame simply shorter, which is what a collapsing fortress
+should look like, and makes the HP bar descend with the castle.

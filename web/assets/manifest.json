@@ -209,7 +209,7 @@
       "volume": 0.6
     }
   },
-  "generatedBy": "tools/ai-studio/scripts/generate-assets.mjs, tools/ai-studio/scripts/import-*-art.mjs, tools/ai-studio/scripts/import-*-art.mjs, tools/ai-studio/scripts/import-*-art.mjs, tools/ai-studio/scripts/import-*-art.mjs, tools/ai-studio/scripts/import-*-art.mjs",
+  "generatedBy": "tools/ai-studio/scripts/generate-assets.mjs, tools/ai-studio/scripts/import-*-art.mjs, tools/ai-studio/scripts/import-*-art.mjs, tools/ai-studio/scripts/import-*-art.mjs, tools/ai-studio/scripts/import-*-art.mjs, tools/ai-studio/scripts/import-*-art.mjs, tools/ai-studio/scripts/import-*-art.mjs",
   "textures": {
     "tex_fur": {
       "file": "textures/tex_fur_v001.png",

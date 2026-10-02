@@ -487,6 +487,10 @@
     host.appendChild(tip);
 
     renderer = makeRenderer(cv, assets);
+    // Exposed so QA and the layout audit can measure the LIVE renderer rather
+    // than a reimplementation of it.
+    globalThis.__bfRenderer = renderer;
+    globalThis.__bfEngine = engine;
     cv.addEventListener('mousemove', e => { hoveredLane = renderer.laneAtClientY(e.clientY); });
     cv.addEventListener('mouseleave', () => { hoveredLane = -1; });
     cv.addEventListener('click', e => {

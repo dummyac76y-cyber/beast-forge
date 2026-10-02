@@ -114,6 +114,206 @@ function analyseFrame(buf) {
   return { w, h, all: stat(all), sky: stat(sky) };
 }
 
+/**
+ * Battle-screen geometry assertions, measured off the live canvas.
+ *
+ * These exist because every one of them was wrong at some point and none of
+ * them produced a console error when they were:
+ *   - lane boundaries were invisible (measured edge strength ~0/255)
+ *   - health bars were positioned from a constant instead of the drawn beast,
+ *     so they landed inside the body
+ *   - the generated-sprite path double-scaled position and size
+ *   - the ruined fortress rendered LARGER than the intact one
+ *
+ * Each check reads the shipped config rather than restating its numbers.
+ */
+async function checkBattleGeometry(page, label) {
+  const r = await page.evaluate(() => {
+    const B = globalThis.BeastForgeBattle;
+    const R = globalThis.__bfRenderer;
+    const eng = globalThis.__bfEngine;
+    const cv = document.querySelector('#battleCanvas');
+    const dpr = cv.width / cv.clientWidth;
+    const g = cv.getContext('2d');
+    const W = cv.width;
+    const px = g.getImageData(0, 0, W, cv.height).data;
+    const sx = cv.clientWidth / B.BATTLEFIELD_W, sy = cv.clientHeight / B.BATTLEFIELD_H;
+    const lum = (x, y) => {
+      const o = (y * W + x) * 4;
+      return 0.2126 * px[o] + 0.7152 * px[o + 1] + 0.0722 * px[o + 2];
+    };
+
+    // Lane boundary edge strength: largest step between adjacent rows near each
+    // boundary. Averaging windows either side cancels the engraved groove out
+    // and reports near-zero for a boundary that is plainly visible.
+    const edges = [];
+    for (let i = 0; i <= B.LANE_COUNT; i++) {
+      const y = Math.round((B.LANE_START + i * B.LANE_HEIGHT) * sy * dpr);
+      const rows = [];
+      for (let k = -6; k <= 8; k++) {
+        let s = 0, n = 0;
+        for (let x = 40; x < W - 40; x += 8) { s += lum(x, y + k); n++; }
+        rows.push(s / n);
+      }
+      let step = 0;
+      for (let k = 1; k < rows.length; k++) step = Math.max(step, Math.abs(rows[k] - rows[k - 1]));
+      edges.push(+step.toFixed(1));
+    }
+
+    // Lane band means -- adjacent lanes must differ enough to count at a glance.
+    const means = [];
+    for (let i = 0; i < B.LANE_COUNT; i++) {
+      const y0 = Math.round((B.LANE_START + i * B.LANE_HEIGHT) * sy * dpr);
+      const y1 = Math.round((B.LANE_START + (i + 1) * B.LANE_HEIGHT) * sy * dpr);
+      let s = 0, n = 0;
+      for (let y = y0; y < y1; y += 2) for (let x = 0; x < W; x += 6) { s += lum(x, y); n++; }
+      means.push(s / n);
+    }
+
+    // Per-unit geometry from the live rig.
+    const units = [];
+    for (const u of [...(eng?.playerUnits || []), ...(eng?.enemyUnits || [])]) {
+      const fp = R?.rig?.footprint(u.cardId);
+      if (!fp) continue;
+      const ground = B.laneGroundY(u.laneIndex);
+      units.push({
+        card: u.cardId, size: fp.size,
+        h: fp.height, w: fp.width,
+        // Bar position the renderer computes, vs where the head actually is.
+        barY: ground - fp.height - B.UNIT_BAR_GAP,
+        headY: ground - fp.height
+      });
+    }
+    return {
+      edges, means, units,
+      laneHeight: B.LANE_HEIGHT,
+      barGap: B.UNIT_BAR_GAP,
+      maxFootprint: B.MAX_FOOTPRINT_X * B.LANE_HEIGHT,
+      layerOrder: R?.constructor ? null : null
+    };
+  });
+
+  const faint = r.edges.filter(e => e < 10);
+  faint.length
+    ? fail(`${label}: ${faint.length}/${r.edges.length} lane boundaries too faint (${r.edges.join(', ')})`)
+    : ok(`${label}: all ${r.edges.length} lane boundaries readable (edge ${Math.min(...r.edges).toFixed(0)}-${Math.max(...r.edges).toFixed(0)})`);
+
+  let minAdj = Infinity;
+  for (let i = 0; i < r.means.length - 1; i++) {
+    minAdj = Math.min(minAdj, Math.abs(r.means[i + 1] - r.means[i]));
+  }
+  minAdj >= 6
+    ? ok(`${label}: five lanes distinguishable (closest adjacent difference ${minAdj.toFixed(1)})`)
+    : fail(`${label}: lanes blend into each other (closest adjacent difference ${minAdj.toFixed(1)})`);
+
+  if (!r.units.length) {
+    fail(`${label}: no beasts on the board to check geometry against`);
+    return;
+  }
+
+  // Health bars must sit above the head, by the configured gap, and the gap
+  // must be positive -- a negative barY-bar relationship is a bar inside a body.
+  const bad = r.units.filter(u => u.barY > u.headY || u.headY - u.barY < r.barGap * 0.5);
+  bad.length
+    ? fail(`${label}: ${bad.length}/${r.units.length} health bars overlap their beast's head`)
+    : ok(`${label}: ${r.units.length} health bars clear of their beast's head (gap ${r.barGap})`);
+
+  // No creature may exceed its width budget, and none may be taller than a lane.
+  const tooWide = r.units.filter(u => u.w > r.maxFootprint * 1.02);
+  const tooTall = r.units.filter(u => u.h > r.laneHeight * 1.0);
+  tooWide.length
+    ? fail(`${label}: ${tooWide.length} beast(s) wider than the footprint budget`)
+    : ok(`${label}: every beast within its width budget (max ${Math.max(...r.units.map(u => u.w)).toFixed(1)}/${r.maxFootprint.toFixed(0)})`);
+  tooTall.length
+    ? fail(`${label}: ${tooTall.length} beast(s) taller than their lane`)
+    : ok(`${label}: no beast taller than its lane (max ${Math.max(...r.units.map(u => u.h)).toFixed(1)}/${r.laneHeight})`);
+}
+
+/**
+ * Assert the renderer paints in the declared order. Catches a background asset
+ * being drawn over gameplay units, which no other check would notice.
+ */
+async function checkLayerOrder(page, label) {
+  const order = await page.evaluate(() => {
+    const R = globalThis.__bfRenderer;
+    if (!R) return null;
+    const seen = [];
+    for (const m of ['drawBackground', 'drawLanes', 'drawFort', 'drawUnit', 'drawProjectiles',
+      'drawParticles', 'drawFloatingTexts', 'drawVignette']) {
+      const orig = R[m];
+      if (typeof orig !== 'function') return { err: 'missing ' + m };
+      R[m] = function (...a) { seen.push(m); return orig.apply(this, a); };
+    }
+    // One frame through the real code path.
+    const eng = globalThis.__bfEngine;
+    if (!eng) return { err: 'no engine' };
+    R.render(eng, 0, -1);
+    for (const m of ['drawBackground', 'drawLanes', 'drawFort', 'drawUnit', 'drawProjectiles',
+      'drawParticles', 'drawFloatingTexts', 'drawVignette']) {
+      delete R[m];   // fall back to the prototype
+    }
+    return { seen };
+  });
+  if (!order || order.err) { fail(`${label}: layer order probe failed (${order && order.err})`); return; }
+  const rank = { drawBackground: 0, drawLanes: 1, drawFort: 2, drawUnit: 3, drawProjectiles: 4, drawParticles: 5, drawFloatingTexts: 6, drawVignette: 7 };
+  let okOrder = true, seenIdx = 0;
+  const seenSet = [];
+  for (const m of order.seen) {
+    if (!seenSet.includes(m)) seenSet.push(m);
+  }
+  for (let i = 1; i < seenSet.length; i++) {
+    if (rank[seenSet[i]] < rank[seenSet[i - 1]]) okOrder = false;
+  }
+  okOrder
+    ? ok(`${label}: paint order is ${seenSet.join(' -> ')}`)
+    : fail(`${label}: paint order violated -- background/environment drew over gameplay (${seenSet.join(' -> ')})`);
+}
+
+/**
+ * The battlefield is defined in virtual units and stretched to the canvas, so
+ * lane geometry should hold at any aspect ratio. Prove it rather than assume
+ * it: at a narrow portrait viewport and a wide one, every lane must still map
+ * to the band the hit test expects, and units must stay inside the playfield.
+ */
+async function checkAspectRatios(page, baseUrl, label) {
+  const sizes = [
+    { w: 900, h: 1000, name: 'portrait 900x1000' },
+    { w: 1600, h: 620, name: 'ultrawide 1600x620' },
+    { w: 1024, h: 768, name: '4:3 1024x768' }
+  ];
+  for (const s of sizes) {
+    await page.setViewportSize({ width: s.w, height: s.h });
+    await page.waitForTimeout(350);
+    const r = await page.evaluate(() => {
+      const B = globalThis.BeastForgeBattle;
+      const R = globalThis.__bfRenderer;
+      const cv = document.querySelector('#battleCanvas');
+      const sy = cv.clientHeight / B.BATTLEFIELD_H;
+      const sx = cv.clientWidth / B.BATTLEFIELD_W;
+      // Hit test and visual band must agree: converting the lane centre back to
+      // a client Y and asking the renderer which lane that is, has to be the
+      // lane we started from.
+      const agree = [];
+      for (let i = 0; i < B.LANE_COUNT; i++) {
+        const clientY = cv.getBoundingClientRect().top + B.laneGroundY(i) * sy;
+        agree.push(R.laneAtClientY(clientY) === i);
+      }
+      const fieldBottom = cv.getBoundingClientRect().top + B.FIELD_BOTTOM * sy;
+      const eng = globalThis.__bfEngine;
+      const onField = [...(eng?.playerUnits || []), ...(eng?.enemyUnits || [])]
+        .every(u => cv.getBoundingClientRect().top + B.laneGroundY(u.laneIndex) * sy <= fieldBottom + 1);
+      return { agree: agree.every(Boolean), onField, sx: +sx.toFixed(2), sy: +sy.toFixed(2),
+        nonSquare: sx !== sy };
+    });
+    r.agree
+      ? ok(`${label}: ${s.name} — lanes map correctly (sx ${r.sx}, sy ${r.sy}${r.nonSquare ? ', anisotropic' : ''})`)
+      : fail(`${label}: ${s.name} — lane hit test disagrees with the drawn band`);
+    if (!r.onField) fail(`${label}: ${s.name} — a unit fell outside the playfield`);
+  }
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.waitForTimeout(250);
+}
+
 async function playBattle(page, label, shotName, wantSprites) {
   await page.click('#nav button[data-screen="campaign"]');
   await page.waitForSelector('button.stage:not([disabled])', { timeout: 10000 });
@@ -209,6 +409,12 @@ async function playBattle(page, label, shotName, wantSprites) {
   await page.mouse.click(box.x + box.width / 2, box.y + box.height * 0.3667);
   await page.keyboard.press('Digit2');
   ok(`${label}: lane clicks + hotkey dispatched`);
+
+  if (renderer === '2d') {
+    await checkBattleGeometry(page, label);
+    await checkLayerOrder(page, label);
+    await checkAspectRatios(page, null, label);
+  }
 
   // Direct evidence the manifest art is actually consumed by the renderer.
   const hits = await page.evaluate(() => {

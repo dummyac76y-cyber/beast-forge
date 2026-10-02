@@ -194,3 +194,124 @@ clicked a pack, so it was never caught.
 **Lesson.** A closure over a sibling function's local is a compile-time-legal,
 runtime-fatal mistake that no static check in this repo would have flagged.
 Anything a card-builder needs to mutate must be passed in.
+
+---
+
+## B8 — `drawSprite` double-scaled position and size
+
+**Status:** FIXED (2026-10-02) · **Found by:** reading the call sites against
+the coordinate model, not by a test
+
+**Symptom.** Not reproducible in the shipped configuration — the painted rig
+path returns before the sprite path is reached, so it was masked. But the
+generated-sprite path was doubly broken.
+
+**Root cause.** `drawSprite(spec, x, y, w, h)` multiplied by `scaleX`/`scaleY`
+while its callers passed values that were already scaled. `drawUnit` computed
+`x = u.position * scaleX` and `y = laneY(...)` (already scaled), then passed
+them in. At a 1202x540 canvas a unit at virtual x=300 drew at
+`300 * 1.202 * 1.202` and its lane y was scaled by 1.2 twice.
+
+One call site contained the giveaway: `drawFort` passed
+`(LANE_START + 2.5 * LANE_HEIGHT) * this.scaleY / this.scaleY` — multiplying then
+dividing by the same factor, a no-op that only existed to look plausible.
+
+**Fix.** `sx()`/`sy()` are now the only virtual→screen conversion.
+`drawSprite()` takes virtual coordinates; `drawSpriteGrounded()` additionally
+pins the sprite's bottom edge to a ground line.
+
+**Lesson.** A masked bug is still a bug. The rig path hid it, which means no
+test would ever have found it — it was found by reading the arithmetic at every
+call site and asking what the number physically means.
+
+---
+
+## B9 — Health bars were positioned from the wrong quantity
+
+**Status:** FIXED (2026-10-02) · **Found by:** measuring bar vs head position
+
+**Symptom.** Bars sat inside the beasts' bodies, and moved inconsistently
+relative to unit size.
+
+**Root cause.** `drawUnitBars(u, x, y, r, bob)` derived the bar's y from `r`,
+a constant tied to the *procedural silhouette* path (`r = 15 * scaleY`). The
+painted beasts drew at a completely different height (~40-50 virtual units), so
+the bar landed about 20 units below their heads. The bar's width was a fixed
+`26 * scaleX` regardless of the creature.
+
+**Fix.** `drawUnitBars` takes the unit's actual drawn `drawW`/`drawH`, centres
+on it, and hangs the bar `UNIT_BAR_GAP` above the real head top.
+
+**Lesson.** If a UI element is positioned relative to something, it must be
+positioned relative to the thing that is actually drawn — not to a constant that
+describes a different rendering path.
+
+---
+
+## B10 — Damaged fortresses rendered *larger* than intact ones
+
+**Status:** FIXED (2026-10-02) · **Found by:** reading the fort frames'
+
+**Symptom.** The ruined enemy castle looked bigger and fatter than the intact
+one, inverting the intended damage read.
+
+**Root cause.** Each damage frame was scaled to a common target height
+(`k = targetH / rh`). The frames are not the same size: `castle_2_3` is 291px
+tall where `castle_2_2` is 480px. Equalising heights therefore scaled the ruin
+up by 480/291 = 1.65x.
+
+Measured by `measure-atlas-bounds.mjs`: every fort frame is 100% opaque (no
+transparent padding), so padding was not the cause — the differing frame
+heights were.
+
+**Fix.** One scale per side, from the tallest frame, reused for all states, each
+anchored at its base line.
+
+**Lesson.** Normalising every frame of an animation to the same output size
+assumes the frames were authored at the same size. Check the source dimensions
+before normalising.
+
+---
+
+## B11 — Lane boundaries were invisible
+
+**Status:** FIXED (2026-10-02) · **Found by:** measuring the rendered canvas
+
+**Symptom.** Five lanes were present in the maths but unreadable on screen.
+
+**Root cause.** `drawLanes` filled alternating translucent rectangles with 1px
+`rgba(255,255,255,0.07)` strokes. Measured luminance step across each boundary:
+**±3 out of 255** — effectively zero.
+
+**Fix.** A playfield plate plus alternating fill plus an engraved groove (dark
+0.52) with a warm upper lip (0.17). Measured edge strength is now 35-52 and the
+closest adjacent-lane mean difference is 9.4.
+
+**Measurement trap worth remembering:** the first boundary metric averaged
+luminance in a ±3px window either side of the boundary and reported ~0 for
+boundaries that were plainly visible. It was cancelling the dark groove against
+the bright lip. The correct metric is the largest step between *adjacent rows*
+near the boundary. A metric that disagrees with what the numbers obviously say
+is usually the metric's fault — check it before "fixing" the renderer.
+
+---
+
+## B12 — `battle-config.js` top-level consts collided in global script scope
+
+**Status:** FIXED (2026-10-02) · **Found by:** `PAGEERROR Identifier
+'LANE_START' has already been declared`
+
+**Symptom.** The entire battle renderer failed to load. Blank canvas, no further
+errors, because `render.js` aborted mid-parse.
+
+**Root cause.** Classic `<script>` tags share **one** global lexical scope. Two
+files both declaring top-level `const LANE_START` is a redeclaration error, and
+the second file never executes.
+
+**Fix.** `battle-config.js` is IIFE-wrapped and exposes only
+`globalThis.BeastForgeBattle` (plus `module.exports` from inside the IIFE, where
+the constant is actually in scope).
+
+**Lesson.** In a classic-script codebase, no file may declare top-level
+`const`/`let` that another file might also declare. Wrap shared-constant
+modules, or prefix them.

@@ -177,3 +177,56 @@ coherence, coverage, grounding and joint connectivity.
 texture counters. QA asserts the renderer actually *consumed* manifest art rather
 than silently falling through to procedural drawing, because a silent fallback
 looks exactly like success from the outside.
+
+## Coordinate contract (2D renderer)
+
+`web/js/battle-config.js` is the single source of truth for battlefield
+geometry. The web renderer, `BattleEngine`'s lane maths, the layout audit and
+QA all read it. It is IIFE-wrapped and exports exactly one global,
+`globalThis.BeastForgeBattle` (plus `module.exports` for Node).
+
+The IIFE is not cosmetic. This file loads with a classic `<script>` tag, where
+top-level `const`s share **one** global lexical scope. Declaring `LANE_START`
+at the top level collided with `render.js`'s own `LANE_START` and threw
+`Identifier 'LANE_START' has already been declared` at load, which killed the
+entire renderer.
+
+### Convert virtual to screen exactly once
+
+Gameplay coordinates are in virtual units (1000x450). `Renderer.sx()` and
+`Renderer.sy()` are the only place that becomes CSS pixels.
+
+`drawSprite()` used to apply the scale factors itself while its callers had
+already applied them. The generated-sprite path therefore double-stretched both
+position and size: at 1202x540 a unit at virtual x=300 drew at
+`300 * 1.202 * 1.202`, and its lane y was scaled twice. The painted rig path
+returned first and masked it entirely. Two rules follow:
+
+- `drawSprite()` and `drawSpriteGrounded()` take **virtual** coordinates only.
+- `drawSpriteGrounded()` additionally guarantees the sprite's **bottom edge**
+  lands on the given ground line, so ground art cannot half-sink.
+
+### Grounding
+
+`(x, laneGroundY(lane))` is the ground contact point — where the feet are.
+`resolveLayout()` anchors joints on painted (trimmed) extents rather than padded
+boxes, and `BeastRig.draw` places its bounding box bottom on the caller's y, so
+feet meet the plane exactly. Verified by `check-beast-layout.mjs` (ground gap
+≈ 0) and by the QA width/height budget assertions.
+
+### Layer order
+
+`LAYER_ORDER` in `render.js` is the authoritative paint order:
+`background → battlefield → forts → units → projectiles → vfx → texts → foreground`.
+`render()` walks that array, and `checkLayerOrder()` in QA intercepts the draw
+calls for one frame and asserts the observed order matches — so a background
+asset cannot quietly end up drawn over gameplay units.
+
+### Adding a battlefield constant
+
+Add it to `battle-config.js` and read it via `CFG`. Never write a lane position,
+a unit height or a bar offset as a literal in `render.js`, `engine.js` or
+`ui.js`. `audit-battle-layout.mjs` calls `CFG.fitUnit` rather than restating the
+formula — the first version of that script invented its own budget
+(`UNIT_BASE_HEIGHT * MAX_FOOTPRINT_X` instead of `LANE_HEIGHT * MAX_FOOTPRINT_X`)
+and was 28% wrong, which is exactly the drift a shared config exists to stop.

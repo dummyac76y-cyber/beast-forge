@@ -31,6 +31,9 @@
   <main id="screen"></main>
   <div id="credits" class="wrap"></div>
 
+  <!-- Battlefield geometry: single source of truth for lanes, unit scale,
+       grounding and bar placement. Must load before engine.js and render.js. -->
+  <script src="js/battle-config.js"></script>
   <script src="js/models.js"></script>
   <script src="js/catalog.js"></script>
   <script src="js/assets.js"></script>
