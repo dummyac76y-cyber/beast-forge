@@ -44,21 +44,37 @@ elements look wrong. See D6 in `DECISIONS.md`.
 | Environment | `npm run doctor` | 7/19 READY; all non-READY items are optional AI engines |
 | Android build | `./gradlew assembleDebug` | **NOT RUN — blocked, see below** |
 
-## Open blocker: Android build cannot be verified here
+## Open blocker: Android build cannot be completed here
 
-Do not read this as "nobody checked". It was investigated on 2026-10-02:
+Do not read this as "nobody checked". It was investigated properly on
+2026-10-02, and the toolchain is now mostly in place:
 
-- JDK 17 installs fine via apt, and Gradle 8.13 runs.
-- But `curl` fails against `dl.google.com` with `self-signed certificate in
-  certificate chain`. Node succeeds because it uses its own bundled CA roots.
-- The system CA bundle — which the **JVM** uses — does not contain the
-  intercepting proxy's CA. So `sdkmanager` cannot fetch
-  `platforms;android-36` or `build-tools;36.0.0`.
-- Gradle's own dependency resolution against Maven for AndroidX/Compose would
-  fail for the same reason.
+- JDK 17 installed, Gradle 8.13 running.
+- `platforms;android-36` and `build-tools;36.0.0` installed via `sdkmanager`.
 
-**This is an environment provisioning problem, not a repo problem.** The fix is to
-add the proxy CA to `/etc/ssl/certs/java/cacerts`.
+Getting that far required working around the environment's TLS interception: the
+proxy's CA lives in `NODE_EXTRA_CA_CERTS`
+(`/etc/cloudflare/certs/cloudflare-containers-ca.crt`) and is **not** in the
+system bundle, so `curl` and `git` fail certificate verification while Node
+succeeds. Importing that CA into a copy of the JDK truststore unblocked
+`sdkmanager`.
+
+**The build still fails, and the reason is a proxy policy, not TLS:**
+
+```
+> Could not GET 'https://repo.maven.apache.org/maven2/org/slf4j/slf4j-api/1.7.30/slf4j-api-1.7.30.pom'.
+  Received status code 403 from server: Forbidden
+```
+
+AGP itself resolves from Google's Maven (`dl.google.com` → 200), but its
+third-party transitive dependencies (`slf4j-api`, `jdom2`, `javawriter`,
+`jsr305`, and ~26 more) exist only on Maven Central, which returns **403 on
+every request** from this environment. `plugins.gradle.org/m2` is blocked
+identically. The build therefore fails during dependency resolution, before any
+Kotlin is compiled.
+
+**To verify the Android app, run it somewhere Maven Central is reachable.** No
+repo change can work around a network-level 403.
 
 Two further facts worth knowing:
 
@@ -75,16 +91,18 @@ Two further facts worth knowing:
 
 ## Suggested next steps
 
-1. **Add the Gradle wrapper.** Currently the Android app is not reproducible
+1. **Run the Android build where Maven Central is reachable** (see the blocker
+   above). This is the only outstanding piece of unverified work.
+2. **Add the Gradle wrapper.** Currently the Android app is not reproducible
    outside one machine. `gradle wrapper --gradle-version 8.13` plus committing
    `gradle-wrapper.jar` would fix it, and would let CI build the app.
-2. **Provision the proxy CA into the JVM truststore** in any environment that must
-   build the Android app, then run a real `assembleDebug` and a Compose UI test.
-3. **Rotate the GitHub token embedded in the remote URL.** The origin is
+3. **Document a real build/run command** in the root `README.md`, which currently
+   has none.
+4. **Rotate the GitHub token embedded in the remote URL.** The origin is
    `https://<token>@github.com/dummyac76y-cyber/beast-forge.git`. Anyone with read
    access to this clone has the token. Set the remote to a clean URL and revoke
    the old token.
-4. **Optional graphics work.** Real AI-generated art needs a GPU or a hosted
+5. **Optional graphics work.** Real AI-generated art needs a GPU or a hosted
    generator; neither is available here. The pipeline is ready — `spec.mjs` is the
    single place to add or replace assets.
 

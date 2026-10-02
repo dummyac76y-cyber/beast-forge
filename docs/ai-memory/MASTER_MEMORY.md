@@ -37,33 +37,51 @@ Measured with `npm run doctor`, not assumed:
 - Playwright + Chromium: installed and working
 - npm registry reachable
 
-### Android toolchain: attempted, blocked by TLS interception
+### Android toolchain: partially installed, build blocked by a 403 proxy
 
 `doctor` reports no JDK and no Android SDK, so the Kotlin app cannot be built
-here by default. That was chased down on 2026-10-02:
+here out of the box. Chased down on 2026-10-02; **the Android build still does
+not complete**, for one specific reason:
 
-- `openjdk-17-jdk-headless` installed fine via apt.
-- Gradle 8.13 downloaded and ran — but only by fetching the archive **with Node**,
-  because `curl` fails with `SSL certificate problem: self-signed certificate in
-  certificate chain`.
-- Node works because it uses its own bundled CA roots; the system bundle (used by
-  curl and by the JVM) does not contain the intercepting proxy's CA.
-- Consequence: `sdkmanager` reports `Failed to download any source lists! / IO
-  exception while downloading manifest` and cannot install `platforms;android-36`
-  or `build-tools;36.0.0`.
+**Working now:**
+- `openjdk-17-jdk-headless` installed via apt.
+- Gradle 8.13 runs (fetched via Node, see below).
+- `sdkmanager` installed `platforms;android-36` and `build-tools;36.0.0`.
 
-**So the Android build remains unverified**, and it is not merely "tooling not
-installed": this environment cannot fetch the Android SDK or resolve AndroidX /
-Compose dependencies from Maven, because the JVM does not trust the proxy. Fixing
-it needs the proxy's CA in `/etc/ssl/certs/java/cacerts` — an environment
-provisioning task, not a repo change.
+**The actual blocker — Maven Central is blocked by the proxy:**
 
-Also note the project has **no Gradle wrapper** (`gradlew` and
-`gradle/wrapper/gradle-wrapper.properties` are absent; only
-`gradle/libs.versions.toml` exists), so the repo cannot build without a
-system Gradle of a matching version. Adding a wrapper would be a genuine
-improvement, but it is a repo change with its own version-pinning consequences,
-so it is flagged rather than done.
+```
+> Could not GET 'https://repo.maven.apache.org/maven2/org/slf4j/slf4j-api/1.7.30/slf4j-api-1.7.30.pom'.
+  Received status code 403 from server: Forbidden
+```
+
+AGP's own artifacts resolve fine from Google's Maven
+(`dl.google.com/dl/android/maven2` returns 200), but AGP's third-party
+transitive dependencies — `slf4j-api`, `jdom2`, `javawriter`, `jsr305` and ~26
+more — only exist on Maven Central, which returns **403 for every request**
+through this environment's proxy. `plugins.gradle.org/m2` is blocked the same
+way. So the build fails at dependency resolution, before compiling a line of
+Kotlin. This is an environment network policy, not something the repo can fix.
+
+### TLS: the environment's CA is in a non-standard place
+
+This tripped up the first attempt and is worth recording, because the fix is not
+obvious:
+
+- `curl` and `git` fail with `server certificate verification failed` /
+  `self-signed certificate in certificate chain`, because the intercepting
+  proxy's CA is absent from `/etc/ssl/certs/ca-certificates.crt`.
+- The CA is present, but only at the path in **`NODE_EXTRA_CA_CERTS`**
+  (`/etc/cloudflare/certs/cloudflare-containers-ca.crt`). Node honours that
+  variable, which is why Node and npm work while curl and git do not.
+- To make git work: concatenate that CA with Node's bundled roots and pass it as
+  `GIT_SSL_CAINFO=/tmp/full-ca.pem`.
+- To make the JVM work: import it into a copy of the JDK truststore with
+  `keytool -importcert -keystore /tmp/ts.jks` and pass
+  `-Djavax.net.ssl.trustStore=/tmp/ts.jks`. That is what let `sdkmanager`
+  install the platform packages.
+
+Fixing TLS is necessary but **not sufficient** — Maven Central remains 403.
 
 ## Golden rules for agents
 
