@@ -185,3 +185,75 @@ stop being added, but the existing seven remain tracked.
 **Why not `git rm --cached`:** untracking files is a destructive, history-affecting
 change to someone's repository and belongs in its own reviewed commit, not in a
 tooling change. Flagged here and in `.gitignore` instead.
+---
+
+## D9 — Canvas 2D is the default renderer; WebGL is opt-in via `?3d`
+
+**Date:** 2026-10-02
+
+**Decision:** `web/js/ui.js` selects Canvas 2D unless the URL carries `?3d`.
+`render3d.js` is retained and still passes QA, but is no longer the default.
+
+**Why:** the original painted art is flat 2D sprite atlases. Compositing them
+in Canvas 2D through `BeastRig` is both simpler and visually faithful; the WebGL
+path was reinterpreting the same art as lit geometry. Two renderers meant two
+places for art direction to drift. Keeping WebGL reachable means nothing is lost
+for anyone who prefers it, and `npm run qa` still exercises both so the opt-in
+path cannot silently rot.
+
+**Cost accepted:** the WebGL path loses its "primary" status in the docs and in
+the QA narrative. The QA harness asserts *which* renderer actually came up,
+because `ui.js` falls back to 2D when WebGL is unavailable and a silent fallback
+must never be mistaken for a WebGL pass.
+
+---
+
+## D10 — Imported painted art is credited as UNRESOLVED, not as CC0
+
+**Date:** 2026-10-02
+
+**Decision:** `manifest.credits` carries a separate entry for the imported
+Fort Conquer art with `license: "UNRESOLVED — do not redistribute commercially
+until cleared"`, naming the two importer scripts and their source trees. The
+CC0 procedural entry is rescoped to say it covers only the generated set.
+
+**Why:** the pre-existing CC0 entry asserted "No model weights, no third-party
+art." That was true when written and became false the moment the painted
+atlases were added. Rolling both provenances into one CC0 line would have been
+the easy path and would have quietly misrepresented the licensing position in
+the running game's credits line, where an end user actually sees it.
+
+**Not decided:** whether the imported art can be shipped at all. That needs the
+original rights holder, and is tracked in `ART_BIBLE.md`.
+
+---
+
+## D11 — Painted scenes live in a separate `scenes` manifest section
+
+**Date:** 2026-10-02
+
+**Decision:** backdrops are registered under `scenes`, not `sprites`, even though
+both are images.
+
+**Why:** `verify.mjs` decodes every `sprites` entry and asserts it is a PNG whose
+header dimensions match `frameW`/`frameH`. The original backdrops are JPEG, and
+the pipeline has no JPEG decoder to measure one with. Rather than weaken the
+sprite contract for every future sprite, the painted scenes got their own
+section with its own loader path (`AssetStore.scene` / `sceneUrl`).
+
+---
+
+## D12 — `AssetStore.sceneUrl()` exists so URL construction never leaks into the UI
+
+**Date:** 2026-10-02
+
+**Decision:** backdrops are painted in the DOM by setting
+`layer.style.backgroundImage` from `assets.sceneUrl(key)`.
+
+**Why:** the loader records intentionally do not carry `file`, so the first
+implementation reached `assets.url(s.file)` directly and produced
+`assets//undefined` — a 404 that looked like a missing file but was a bug. Two
+defects compounded it: `AssetStore`'s base path was built as `'assets//'`
+whenever no explicit base was passed, and scene records dropped `file` entirely.
+Both are fixed at the source, and `sceneUrl()` is the single accessor so the
+same mistake cannot recur in the next screen. See `BUG_MEMORY.md`.

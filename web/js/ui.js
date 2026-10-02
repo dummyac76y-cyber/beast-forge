@@ -123,18 +123,195 @@
       `<span class="chip">Best Arena ${p.highestArenaWave}</span>`;
   }
 
+  // ---------- scene layers ----------
+  // A .scene is the full-bleed backdrop for a screen. Layers are painted only
+  // if the manifest supplied that scene key, so with every asset blocked the
+  // screen still gets graded scrims rather than a flat void.
+  //
+// Backdrop URLs come from AssetStore, which owns the manifest base path and
+  // returns null for any key that failed to decode -- so a screen with a
+  // missing scene still renders its scrims instead of requesting a broken URL.
+  function sceneUrl(key) {
+    if (!key) return null;
+    return assets && typeof assets.sceneUrl === 'function' ? assets.sceneUrl(key) : null;
+  }
+
+  /**
+   * @param opts { back, mid, near, far } scene keys for the layers
+   */
+  function scene(opts, depth) {
+    const o = opts || {};
+    const root = el('div', 'scene');
+    const add = (cls, url, d, dx, dy) => {
+      if (!url) return;
+      const l = el('div', 'layer ' + cls);
+      l.style.backgroundImage = `url("${url}")`;
+      if (d) {
+        l.dataset.depth = d;
+        l.style.setProperty('--dx', dx || 0);
+        l.style.setProperty('--dy', dy || 0);
+      }
+      root.appendChild(l);
+    };
+    // BACKDROP -> MIDGROUND -> FOREGROUND, then atmosphere on top of all of it.
+    add('lyr-back', sceneUrl(o.back), null);
+    add('lyr-mid', sceneUrl(o.mid), 0.5, depth || 10, 4);
+    add('lyr-near', sceneUrl(o.near), 1, (depth || 10) * 2, 7);
+    root.appendChild(el('div', 'layer lyr-haze'));
+    root.appendChild(el('div', 'layer lyr-fog'));
+    root.appendChild(el('div', 'layer lyr-firelight'));
+    root.appendChild(el('div', 'layer lyr-frame'));
+    root.appendChild(el('div', 'scene-body'));
+    return root;
+  }
+
+  function sceneBody(root) {
+    return root.querySelector('.scene-body');
+  }
+
+  /** Pointer parallax. Small enough to feel like depth, not like a gimmick. */
+  function wireParallax(root) {
+    if (!root || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    let raf = 0;
+    const move = (e) => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        const r = root.getBoundingClientRect();
+        const px = ((e.clientX - r.left) / r.width - 0.5) * 2;
+        const py = ((e.clientY - r.top) / r.height - 0.5) * 2;
+        root.style.setProperty('--px', px.toFixed(3));
+        root.style.setProperty('--py', py.toFixed(3));
+      });
+    };
+    root.addEventListener('pointermove', move);
+  }
+
+  function sceneHead(title, sub) {
+    const w = el('div');
+    w.appendChild(el('h1', 'scene-title', title));
+    if (sub) w.appendChild(el('p', 'scene-sub', sub));
+    return w;
+  }
+
+  // A live portrait of the actual painted beast, drawn by the same rig the
+  // battle renderer uses. This is the whole point of importing the original
+  // art: the roster should show the creature you will actually field.
+  //
+  // One rig is shared across every portrait so the part cache is not rebuilt
+  // per card; the canvases themselves are cheap and static.
+  let portraitRig = null;
+  function portrait(cardId, px) {
+    const size = px || 104;
+    const cv = el('canvas', 'portrait');
+    const dpr = Math.min(2, globalThis.devicePixelRatio || 1);
+    cv.width = size * dpr;
+    cv.height = size * dpr;
+    cv.style.width = size + 'px';
+    cv.style.height = size + 'px';
+    const Rig = globalThis.__beastForgeRig;
+    if (!Rig) return cv;
+    if (!portraitRig) portraitRig = new Rig.BeastRig(assets);
+    const rig = portraitRig.get(cardId);
+    const ctx = cv.getContext('2d');
+    if (!rig || !ctx) return cv;
+    // Fit the rig's own proportions into the tile, then centre it. draw()
+    // takes the rig's LEFT edge and its ground line, not a centre point, so
+    // the offsets have to be computed from the scaled bounds.
+    const scale = (size * 0.86) / Math.max(rig.width, rig.height);
+    const ground = size * 0.95;
+    const left = (size - rig.width * scale) / 2;
+    const t = 0; // idle at t=0 is a stable, non-animating pose for a static UI
+    ctx.save();
+    ctx.scale(dpr, dpr);
+    const grounded = portraitRig.draw(ctx, cardId, left, ground, 'idle', t, {
+      scale,
+      facing: 1
+    });
+    ctx.restore();
+    if (!grounded) {
+      // No painted parts for this card: fall back to the element glyph so the
+      // card is never an empty grey square.
+      cv.replaceWith(el('div', 'portrait-fallback', '⬢'));
+    }
+    return cv;
+  }
+
   // ---------- main menu ----------
   function menu(host) {
     const p = repo.profile;
-    host.appendChild(panel('Fort Conquest', 'Forge beasts, hold five lanes, break the enemy citadel.'));
-    const grid = el('div', 'grid');
-    grid.appendChild(bigBtn('⚔', 'Campaign', `Stage ${p.currentStage}`, 'campaign'));
-    grid.appendChild(bigBtn('∞', 'Titan Arena', p.highestArenaWave ? `Best wave ${p.highestArenaWave}` : 'Endless waves', 'arena'));
-    grid.appendChild(bigBtn('⚒', 'Beast Forge', 'Evolve & level', 'forge'));
-    grid.appendChild(bigBtn('🛡', 'Fort Armory', 'Upgrade defenses', 'armory'));
-    grid.appendChild(bigBtn('📜', 'Roster', `${p.unlockedCards.length} beasts · deck of ${p.deckCardIds.length}`, 'roster'));
-    host.appendChild(grid);
-    host.appendChild(el('p', 'hint', 'Sound cues are synthesised — the Android build ships with no audio assets, so it runs silent.'));
+    const root = scene({ back: 'scene_base' }, 8);
+    const body = sceneBody(root);
+    wireParallax(root);
+    host.appendChild(root);
+
+    const wrap = el('div', 'base');
+    const left = el('div');
+
+    const crest = el('div', 'base-crest');
+    const sig = el('div', 'sigil', '⚒');
+    crest.appendChild(sig);
+    const crestText = el('div');
+    crestText.appendChild(el('div', 'base-lore',
+      'Five lanes stand between your citadel and the Dominion. Forge beasts from wild stock, bind them to the wheel of elements, and hold.'));
+    crest.appendChild(crestText);
+    left.appendChild(crest);
+    left.appendChild(el('h1', 'base-title', 'Beast Forge'));
+
+    const stats = el('div', 'base-stats');
+    stats.appendChild(statBadge('Citadel', `Lv ${p.fortLevel}`));
+    stats.appendChild(statBadge('Arena Best', p.highestArenaWave ? `Wave ${p.highestArenaWave}` : '—'));
+    stats.appendChild(statBadge('Beasts', String(p.unlockedCards.length)));
+    left.appendChild(stats);
+    wrap.appendChild(left);
+
+    // The one primary action. Everything else on this screen is secondary.
+    const right = el('div');
+    const nextStage = Math.min(12, Math.max(1, p.currentStage));
+    const st = CAT.getStage(nextStage);
+    const main = el('button', 'callout');
+    main.appendChild(el('span', 'eyebrow', 'Main Action'));
+    main.appendChild(el('span', 'ctitle', 'Fort Conquest'));
+    main.appendChild(el('span', 'csub',
+      `Stage ${nextStage} — ${st.name} · ${Math.round(st.enemyFortHp)} HP citadel`
+      + (st.bossCard ? ` · ${st.bossCard.name} commands it` : '')));
+    main.appendChild(el('span', 'cplay', '⚔ Play'));
+    main.addEventListener('click', () => {
+      audio.unlock(); audio.play('button'); startBattle(nextStage, false);
+    });
+    right.appendChild(main);
+
+    const dest = el('div', 'dest');
+    dest.appendChild(destTile('⚔', 'Campaign', `12 stages`, 'campaign'));
+    dest.appendChild(destTile('∞', 'Titan Arena',
+      p.highestArenaWave ? `Best wave ${p.highestArenaWave}` : 'Endless waves', 'arena'));
+    dest.appendChild(destTile('⚒', 'Beast Forge', 'Evolve & train', 'forge'));
+    dest.appendChild(destTile('🛡', 'Fort Armory', 'Upgrade defenses', 'armory'));
+    dest.appendChild(destTile('📜', 'Roster', `Deck of ${p.deckCardIds.length}`, 'roster'));
+    right.appendChild(dest);
+    wrap.appendChild(right);
+    body.appendChild(wrap);
+  }
+
+  function statBadge(label, value) {
+    const b = el('div', 'tile');
+    b.style.cssText = 'background:rgba(0,0,0,.34);border:1px solid var(--line);border-radius:10px;padding:9px 13px';
+    const l = el('div');
+    l.appendChild(el('div', 'ts', label));
+    l.appendChild(el('div', 'tt', value));
+    b.appendChild(l);
+    return b;
+  }
+
+  function destTile(icon, title, sub, target) {
+    const b = el('button', 'tile');
+    b.appendChild(el('span', 'ic', icon));
+    const t = el('span');
+    t.appendChild(el('span', 'tt', title));
+    t.appendChild(el('span', 'ts', sub));
+    b.appendChild(t);
+    b.addEventListener('click', () => { audio.unlock(); audio.play('button'); route(target); });
+    return b;
   }
 
   function panel(title, sub) {
@@ -153,32 +330,101 @@
   }
 
   // ---------- campaign picker ----------
+  // A journey up a map rather than a grid of cards. Nodes keep the `stage`
+  // class and are real <button>s, because that is the contract the QA harness
+  // drives -- the presentation changed, the contract did not.
   function campaign(host) {
     const p = repo.profile;
-    host.appendChild(panel('Campaign Dominion', 'Conquer the enemy fortress across five lanes.'));
-    const wrap = el('div', 'stages');
+    const root = scene({ back: 'scene_citadel' }, 14);
+    const body = sceneBody(root);
+    wireParallax(root);
+    host.appendChild(root);
+
+    body.appendChild(sceneHead('Campaign Dominion',
+      'Climb from the Verdant Outskirts to the Abyssal Spire.'));
+
+    const wrap = el('div', 'map');
+    wrap.style.height = 'clamp(420px, 58vh, 560px)';
+
+    // Serpentine route: alternate column so the path reads as a trail up the
+    // map rather than a straight ladder.
+    const pos = i => {
+      const t = (i - 1) / 11;
+      const col = i % 2 ? 30 : 70;
+      return { x: col, y: 92 - t * 78 };
+    };
+
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'path');
+    svg.setAttribute('preserveAspectRatio', 'none');
+    svg.setAttribute('viewBox', '0 0 100 100');
+    for (let i = 1; i < 12; i++) {
+      const a = pos(i), b = pos(i + 1);
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('x1', a.x); line.setAttribute('y1', a.y);
+      line.setAttribute('x2', b.x); line.setAttribute('y2', b.y);
+      line.setAttribute('vector-effect', 'non-scaling-stroke');
+      if (i < p.currentStage) line.classList.add('done');
+      svg.appendChild(line);
+    }
+    wrap.appendChild(svg);
+
     for (let i = 1; i <= 12; i++) {
       const st = CAT.getStage(i);
       const unlocked = i <= p.currentStage;
-      const b = el('button', 'stage' + (unlocked ? '' : ' locked'));
-      b.appendChild(el('span', 'n', 'Stage ' + i));
-      b.appendChild(el('span', 'nm', st.name));
-      b.appendChild(el('span', 'meta', `${Math.round(st.enemyFortHp)} HP · ${st.enemySpawns.length} foes`));
-      if (st.bossCard) b.appendChild(el('span', 'boss', '★ ' + st.bossCard.name));
-      if (unlocked) b.addEventListener('click', () => { audio.unlock(); audio.play('button'); startBattle(i, false); });
+      const at = pos(i);
+      const isNext = i === p.currentStage;
+      // `stage` is kept as a stable hook: the QA harness selects
+      // `button.stage:not([disabled])`, and that contract should not be
+      // renegotiated every time the campaign presentation changes.
+      let cls = 'node stage';
+      if (i < p.currentStage) cls += ' done';
+      else if (isNext) cls += ' next';
+      if (st.bossCard) cls += ' boss';
+      const b = el('button', cls + (unlocked ? '' : ' locked'), st.bossCard ? '★' : String(i));
+      b.style.left = at.x + '%';
+      b.style.top = at.y + '%';
+      b.title = `Stage ${i} — ${st.name}${st.bossCard ? ' · ' + st.bossCard.name : ''}`;
+      b.appendChild(el('span', 'cap', `${i}. ${st.name}`));
+      if (unlocked) b.addEventListener('click', () => {
+        audio.unlock(); audio.play('button'); startBattle(i, false);
+      });
       else b.disabled = true;
       wrap.appendChild(b);
     }
-    host.appendChild(wrap);
+    body.appendChild(wrap);
+
+    const legend = el('div', 'legend');
+    legend.appendChild(el('span', null, '★ Boss citadel · gold marks your next conquest · broken stone is locked'));
+    body.appendChild(legend);
   }
 
   // ---------- battle ----------
   function arena(host) {
-    host.appendChild(panel('Titan Arena', 'Survive endless waves. Only your own beasts hold the line.'));
-    const b = el('button', 'primary');
-    b.textContent = 'Enter Arena';
+    const p = repo.profile;
+    const root = scene({ back: 'scene_arena' }, 12);
+    const body = sceneBody(root);
+    wireParallax(root);
+    host.appendChild(root);
+
+    body.appendChild(sceneHead('Titan Arena',
+      'An endless wave of Dominion beasts. Only your own beasts hold the line.'));
+    const card = el('div', 'panel');
+    card.style.maxWidth = '520px';
+    card.style.marginTop = '22px';
+    card.appendChild(el('p', 'scene-sub',
+      p.highestArenaWave
+        ? `Your best run reached wave ${p.highestArenaWave}.`
+        : 'No run recorded. The arena does not forgive a thin deck.'));
+    const b = el('button', 'callout');
+    b.style.marginTop = '14px';
+    b.appendChild(el('span', 'eyebrow', 'Endless'));
+    b.appendChild(el('span', 'ctitle', 'Enter the Arena'));
+    b.appendChild(el('span', 'csub', 'Score is kept as your highest wave.'));
+    b.appendChild(el('span', 'cplay', '▶ Begin'));
     b.addEventListener('click', () => { audio.unlock(); audio.play('button'); startBattle(1, true); });
-    host.appendChild(b);
+    card.appendChild(b);
+    body.appendChild(card);
   }
 
   function startBattle(stageNumber, isArena) {
@@ -253,21 +499,27 @@
   }
 
   /**
-   * Prefer the WebGL renderer; fall back to the 2D canvas renderer when WebGL
-   * is unavailable or context creation fails (old devices, blocklists, headless
-   * test environments). Both expose the same interface:
+   * Canvas 2D is the game's renderer. It is what the art direction is built
+   * for: painted backdrops, composed creature rigs, layered atmosphere.
+   *
+   * render3d.js is still shipped and still works, behind `?3d`, because it is
+   * a working system and removing it is not this change's call. It is simply
+   * no longer the default: a 3D battle renderer contradicts this being a 2D
+   * game, and it cannot show the painted beast art at all.
+   *
+   * Both expose the same interface:
    * render(engine, selectedLane, hoveredLane), laneAtClientY(y), resize().
    */
   function makeRenderer(cv, assets) {
-    const three = globalThis.__beastForge3D;
-    if (three && typeof three.createRenderer3D === 'function' && !forceCanvas2D) {
-      try {
-        // Hand the shared AssetStore over so render3d.js can use the manifest's
-        // painted backgrounds and tiling detail maps. It is optional: with no
-        // store the 3D renderer falls back to its own procedural materials.
-        return three.createRenderer3D(cv, { assets });
-      } catch (e) {
-        console.warn('Beast Forge: WebGL unavailable, using 2D renderer.', e);
+    const force3D = /[?&]3d(?:[=&]|$)/.test(location.search);
+    if (!forceCanvas2D && force3D) {
+      const three = globalThis.__beastForge3D;
+      if (three && typeof three.createRenderer3D === 'function') {
+        try {
+          return three.createRenderer3D(cv, { assets });
+        } catch (e) {
+          console.warn('Beast Forge: WebGL unavailable, using 2D renderer.', e);
+        }
       }
     }
     return new Renderer(cv, assets);
@@ -384,22 +636,33 @@
   // ---------- forge ----------
   function forge(host) {
     const p = repo.profile;
-    host.appendChild(panel('Beast Forge', 'Evolve through five tiers or invest coins in levels.'));
+    const root = scene({ back: 'scene_volcano' }, 10);
+    const body = sceneBody(root);
+    wireParallax(root);
+    host.appendChild(root);
+    body.appendChild(sceneHead('Beast Forge',
+      'Push a beast through five tiers, or spend coins on levels. Both carry into every battle.'));
+
     const list = el('div', 'cards');
     for (const c of p.unlockedCards) {
-      const card = el('div', 'bcard');
+      const card = el('div', 'bcard beast-card');
       card.style.setProperty('--el', ELEMENT[c.element].color);
       card.style.setProperty('--ti', TIER[c.tier].color);
-      card.appendChild(el('div', 'bn', c.name));
-      card.appendChild(el('div', 'bm', `${ELEMENT[c.element].displayName} · ${TIER[c.tier].displayName} · Lv${c.level}`));
-      card.appendChild(el('div', 'bs', `HP ${cardHp(c)} · ATK ${cardAtk(c)} · ${c.manaCost} mana`));
-      card.appendChild(el('div', 'bl', c.lore));
+      card.appendChild(portrait(c.id, 108));
+      const info = el('div', 'beast-info');
+      info.appendChild(el('div', 'bn', c.name));
+      info.appendChild(el('div', 'bm', `${ELEMENT[c.element].displayName} · ${TIER[c.tier].displayName} · Lv${c.level}`));
+      info.appendChild(el('div', 'bs', `HP ${cardHp(c)} · ATK ${cardAtk(c)} · ${c.manaCost} mana`));
+      info.appendChild(el('div', 'bl', c.lore));
+      card.appendChild(info);
       const row = el('div', 'row');
 
-      const ev = el('button', 'primary', 'Evolve');
+      const ev = el('button', 'primary');
       const xt = EVOLVE_CRYSTALS[c.tier], xc = EVOLVE_COINS[c.tier];
-      if (xt === null) { ev.textContent = 'Max tier'; ev.disabled = true; }
-      else {
+      if (xt === null) {
+        ev.textContent = 'Max tier';
+        ev.disabled = true;
+      } else {
         ev.textContent = `Evolve ${xc}c/${xt}x`;
         ev.disabled = p.coins < xc || p.crystals < xt;
         ev.addEventListener('click', () => {
@@ -413,26 +676,32 @@
       card.appendChild(row);
       list.appendChild(card);
     }
-    host.appendChild(list);
+    body.appendChild(list);
   }
 
   // ---------- armory ----------
   function armory(host) {
     const p = repo.profile;
-    host.appendChild(panel('Fort Armory', 'Permanent upgrades that carry across every battle.'));
+    const root = scene({ back: 'scene_citadel' }, 12);
+    const body = sceneBody(root);
+    wireParallax(root);
+    host.appendChild(root);
+    body.appendChild(sceneHead('Fort Armory',
+      'Permanent upgrades that carry across every battle. Spend coins on the citadel, crystals on beasts.'));
     const list = el('div', 'cards');
     list.appendChild(upgradeCard('Citadel Wall', p.fortLevel, `${profileFortMaxHp(p)} HP`, () => p.fortLevel * 250, repo.upgradeFort.bind(repo)));
     list.appendChild(upgradeCard('Arcane Ballista', p.turretLevel, `${profileTurretAtk(p)} atk / ${profileTurretCooldown(p).toFixed(2)}s`, () => p.turretLevel * 220, repo.upgradeTurret.bind(repo)));
     list.appendChild(upgradeCard('Mana Well', p.mineralLevel, `${profileMaxMana(p)} max · ${profileManaRegen(p).toFixed(1)}/s`, () => p.mineralLevel * 200, repo.upgradeMineral.bind(repo)));
-    host.appendChild(list);
+    body.appendChild(list);
 
+    body.appendChild(el('h3', 'section-h', 'Summon Packs'));
     const packs = el('div', 'packs');
-    packs.appendChild(packCard('Silver Wyrm Pack', '400 coins', 'COMMON – EPIC chance', () => repo.summonBeastPack(false), p.coins >= 400));
-    packs.appendChild(packCard('Golden Wyrm Pack', '35 crystals', 'RARE – LEGENDARY', () => repo.summonBeastPack(true), p.crystals >= 35));
-    host.appendChild(packs);
     const out = el('div', 'out');
     out.id = 'packOut';
-    host.appendChild(out);
+    packs.appendChild(packCard('Silver Wyrm Pack', '400 coins', 'COMMON – EPIC chance', () => repo.summonBeastPack(false), p.coins >= 400, out));
+    packs.appendChild(packCard('Golden Wyrm Pack', '35 crystals', 'RARE – LEGENDARY', () => repo.summonBeastPack(true), p.crystals >= 35, out));
+    body.appendChild(packs);
+    body.appendChild(out);
   }
 
   function upgradeCard(title, level, stat, costFn, apply) {
@@ -450,7 +719,10 @@
     return card;
   }
 
-  function packCard(title, cost, odds, fn, afford) {
+  // `out` is passed in rather than closed over: this used to reference a `const
+  // out` declared in armory(), which is not in scope here, so opening a pack
+  // threw a ReferenceError before the reveal could paint.
+  function packCard(title, cost, odds, fn, afford, out) {
     const card = el('div', 'pack');
     card.appendChild(el('div', 'bn', title));
     card.appendChild(el('div', 'bm', cost));
@@ -461,13 +733,16 @@
       const drawn = fn();
       if (!drawn) return;
       audio.unlock(); audio.play('coin');
-      const c = el('div', 'bcard drawn');
+      const c = el('div', 'bcard beast-card drawn');
       c.style.setProperty('--el', ELEMENT[drawn.element].color);
       c.style.setProperty('--ti', TIER[drawn.tier].color);
-      c.appendChild(el('div', 'bn', drawn.name));
-      c.appendChild(el('div', 'bm', `${ELEMENT[drawn.element].displayName} · ${TIER[drawn.tier].displayName}`));
-      c.appendChild(el('div', 'bs', `HP ${cardHp(drawn)} · ATK ${cardAtk(drawn)}`));
-      c.appendChild(el('div', 'bl', drawn.lore));
+      c.appendChild(portrait(drawn.id, 118));
+      const info = el('div', 'beast-info');
+      info.appendChild(el('div', 'bn', drawn.name));
+      info.appendChild(el('div', 'bm', `${ELEMENT[drawn.element].displayName} · ${TIER[drawn.tier].displayName}`));
+      info.appendChild(el('div', 'bs', `HP ${cardHp(drawn)} · ATK ${cardAtk(drawn)}`));
+      info.appendChild(el('div', 'bl', drawn.lore));
+      c.appendChild(info);
       out.innerHTML = '';
       out.appendChild(el('h3', null, 'Summoned'));
       out.appendChild(c);
@@ -478,7 +753,8 @@
       fresh.appendChild(upgradeCard('Arcane Ballista', repo.profile.turretLevel,
         `${profileTurretAtk(repo.profile)} atk / ${profileTurretCooldown(repo.profile).toFixed(2)}s`,
         () => repo.profile.turretLevel * 220, repo.upgradeTurret.bind(repo)));
-      host.replaceChild(fresh, host.querySelector('.cards'));
+      const old = host.querySelector('.scene-body > .cards');
+      if (old) host.replaceChild(fresh, old);
     });
     return card;
   }
@@ -486,32 +762,45 @@
   // ---------- roster ----------
   function roster(host) {
     const p = repo.profile;
-    host.appendChild(panel('Roster & Loadout', 'Pick up to four beasts for your active battle deck.'));
+    const root = scene({ back: 'scene_forest' }, 10);
+    const body = sceneBody(root);
+    wireParallax(root);
+    host.appendChild(root);
+    body.appendChild(sceneHead('Roster & Loadout',
+      'Pick up to four beasts for your active battle deck. Mana decides how many you can afford at once.'));
+
     const deck = el('div', 'deck');
-    deck.appendChild(el('h3', null, `Active deck (${p.deckCardIds.length}/4)`));
+    deck.appendChild(el('h3', 'section-h', `Active deck (${p.deckCardIds.length}/4)`));
     const dwrap = el('div', 'deckrow');
     for (const id of p.deckCardIds) {
       const c = p.unlockedCards.find(x => x.id === id);
       if (!c) continue;
       const chip = el('button', 'chipcard on');
       chip.style.setProperty('--el', ELEMENT[c.element].color);
-      chip.textContent = c.name;
+      chip.appendChild(portrait(c.id, 72));
+      const t = el('span');
+      t.appendChild(el('span', 'tt', c.name));
+      t.appendChild(el('span', 'ts', `${c.manaCost} mana`));
+      chip.appendChild(t);
       chip.addEventListener('click', () => { repo.setDeck(p.deckCardIds.filter(x => x !== id)); route('roster'); });
       dwrap.appendChild(chip);
     }
     if (!p.deckCardIds.length) dwrap.appendChild(el('span', 'hint', 'Empty — choose below.'));
     deck.appendChild(dwrap);
-    host.appendChild(deck);
+    body.appendChild(deck);
 
     const list = el('div', 'cards');
     for (const c of p.unlockedCards) {
       const inDeck = p.deckCardIds.includes(c.id);
-      const card = el('div', 'bcard');
+      const card = el('div', 'bcard beast-card' + (inDeck ? ' in-deck' : ''));
       card.style.setProperty('--el', ELEMENT[c.element].color);
       card.style.setProperty('--ti', TIER[c.tier].color);
-      card.appendChild(el('div', 'bn', c.name));
-      card.appendChild(el('div', 'bm', `${ELEMENT[c.element].displayName} · ${TIER[c.tier].displayName} · Lv${c.level}`));
-      card.appendChild(el('div', 'bs', `HP ${cardHp(c)} · ATK ${cardAtk(c)} · cost ${c.manaCost}`));
+      card.appendChild(portrait(c.id, 96));
+      const info = el('div', 'beast-info');
+      info.appendChild(el('div', 'bn', c.name + (inDeck ? ' ✓' : '')));
+      info.appendChild(el('div', 'bm', `${ELEMENT[c.element].displayName} · ${TIER[c.tier].displayName} · Lv${c.level}`));
+      info.appendChild(el('div', 'bs', `HP ${cardHp(c)} · ATK ${cardAtk(c)} · cost ${c.manaCost}`));
+      card.appendChild(info);
       const b = el('button', inDeck ? 'ghost' : 'primary', inDeck ? 'Remove' : 'Add to deck');
       b.disabled = !inDeck && p.deckCardIds.length >= 4;
       b.addEventListener('click', () => {
@@ -523,7 +812,7 @@
       const row = el('div', 'row'); row.appendChild(b); card.appendChild(row);
       list.appendChild(card);
     }
-    host.appendChild(list);
+    body.appendChild(list);
   }
 
   // ---------- aliases kept short for readability above ----------

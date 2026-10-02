@@ -119,6 +119,49 @@ async function playBattle(page, label, shotName, wantSprites) {
   await page.waitForSelector('button.stage:not([disabled])', { timeout: 10000 });
   ok(`${label}: campaign screen rendered ${await page.locator('button.stage').count()} stage buttons`);
 
+  // Painted portraits in the roster. The screen is only worth its art if the
+  // beasts actually land in frame, so measure coverage and centring rather than
+  // just counting canvases -- a mis-anchored draw puts every beast hard against
+  // one edge while still reporting "10 portraits rendered".
+  await page.click('#nav button[data-screen="roster"]');
+  await page.waitForSelector('canvas.portrait', { timeout: 10000 });
+  const portraits = await page.evaluate(() => {
+    const out = [];
+    for (const cv of document.querySelectorAll('canvas.portrait')) {
+      const ctx = cv.getContext('2d');
+      const d = ctx.getImageData(0, 0, cv.width, cv.height).data;
+      let opaque = 0, x0 = 1e9, x1 = -1;
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i + 3] > 24) {
+          opaque++;
+          const px = (i / 4) % cv.width;
+          if (px < x0) x0 = px;
+          if (px > x1) x1 = px;
+        }
+      }
+      out.push({
+        pct: 100 * opaque / (d.length / 4),
+        // Centre of mass relative to the tile centre; 0 means dead centre.
+        off: (x0 + x1) / 2 / cv.width - 0.5
+      });
+    }
+    return out;
+  });
+  const fallbacks = await page.locator('.portrait-fallback').count();
+  if (portraits.length) {
+    const empties = portraits.filter(p => p.pct < 2).length;
+    const lopsided = portraits.filter(p => Math.abs(p.off) > 0.12).length;
+    if (empties) fail(`${label}: ${empties}/${portraits.length} portraits are blank (rig did not draw)`);
+    else if (lopsided) fail(`${label}: ${lopsided}/${portraits.length} portraits are off-centre (anchor regression)`);
+    else if (fallbacks) fail(`${label}: ${fallbacks} portraits fell back to the placeholder glyph`);
+    else ok(`${label}: ${portraits.length} painted portraits drew in frame ` +
+      `(${(portraits.reduce((s, p) => s + p.pct, 0) / portraits.length).toFixed(0)}% avg coverage)`);
+  } else if (!fallbacks) {
+    fail(`${label}: roster rendered no beast portraits at all`);
+  }
+  await page.click('#nav button[data-screen="campaign"]');
+  await page.waitForSelector('button.stage:not([disabled])', { timeout: 10000 });
+
   await page.locator('button.stage:not([disabled])').first().click();
   await page.waitForSelector('#battleCanvas', { state: 'visible', timeout: 10000 });
   await page.waitForSelector('#hud .wave', { timeout: 10000 });
@@ -172,13 +215,19 @@ async function playBattle(page, label, shotName, wantSprites) {
     const st = globalThis.__beastForgeAssets.stats;
     return {
       spriteHits: st.spriteHits, spriteMisses: st.spriteMisses,
-      textureHits: st.textureHits, textureMisses: st.textureMisses
+      textureHits: st.textureHits, textureMisses: st.textureMisses,
+      sceneHits: st.sceneHits || 0, beastHits: st.beastHits || 0,
+      beastMisses: st.beastMisses || 0
     };
   });
+  // The 2D renderer draws painted art from three manifest sections (sprites,
+  // scenes, beasts+forts). What matters is that manifest art reached the
+  // screen at all, not which section it came from.
+  const painted = hits.spriteHits + hits.sceneHits + hits.beastHits;
   if (renderer === '2d') {
-    hits.spriteHits > 0
-      ? ok(`${label}: renderer consumed manifest sprites (${hits.spriteHits} sprite draws, ${hits.spriteMisses} procedural fallbacks)`)
-      : fail(`${label}: manifest sprites never used despite ${wantSprites.length} being loaded`);
+    painted > 0
+      ? ok(`${label}: renderer consumed manifest art (${hits.spriteHits} sprites, ${hits.sceneHits} scenes, ${hits.beastHits} creatures)`)
+      : fail(`${label}: manifest art never used despite ${wantSprites.length} sprites being loaded`);
     hits.textureHits === 0
       ? ok(`${label}: 2D renderer ignores tiling maps (${hits.textureHits} lookups) — expected, they are for WebGL`)
       : ok(`${label}: 2D renderer also looked up ${hits.textureHits} tiling maps`);
@@ -284,13 +333,15 @@ async function playBattle(page, label, shotName, wantSprites) {
 
   if (shotName) {
     fs.mkdirSync(SHOTS, { recursive: true });
-    await page.screenshot({ path: path.join(SHOTS, shotName) });
+    await page.screenshot({ path: path.join(SHOTS, shotName), timeout: 90000 });
     ok(`${label}: screenshot -> tools/ai-studio/qa/shots/${shotName}`);
   }
 }
 
 try {
-  for (const [label, query] of [['webgl', ''], ['canvas2d', '?2d']]) {
+  // Canvas 2D is the default renderer (ui.js makeRenderer); ?3d exercises the
+  // retained WebGL path so it cannot rot unnoticed.
+  for (const [label, query] of [['canvas2d', ''], ['webgl', '?3d']]) {
     head(`Playwright QA: ${label}`);
     const { ctx, page } = await newPage(query);
     await checkAssets(page, label);
@@ -305,7 +356,7 @@ try {
   // Both renderers must survive having no manifest at all. This is the guarantee
   // that lets the AI Studio stay optional, and it is exactly the code path the
   // new texture/background lookups in render3d.js have to fall back into.
-  for (const [label, query] of [['canvas2d', '?2d'], ['webgl', '']]) {
+  for (const [label, query] of [['canvas2d', ''], ['webgl', '?3d']]) {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
     const errors = [];
@@ -317,6 +368,9 @@ try {
     const s = await page.evaluate(() => ({
       sprites: Object.keys(globalThis.__beastForgeAssets.sprites).length,
       textures: Object.keys(globalThis.__beastForgeAssets.textures || {}).length,
+      scenes: Object.keys(globalThis.__beastForgeAssets.scenes || {}).length,
+      beasts: Object.keys(globalThis.__beastForgeAssets.beasts || {}).length,
+      forts: Object.keys(globalThis.__beastForgeAssets.forts || {}).length,
       loaded: globalThis.__beastForgeAssets.loaded
     }));
     await page.click('#nav button[data-screen="campaign"]');
@@ -331,9 +385,11 @@ try {
     const shot = await page.locator('#battleCanvas').screenshot();
     const tone = analyseFrame(shot);
     const range = tone.all.p95 - tone.all.p05;
-    (s.sprites === 0 && s.textures === 0 && errors.length === 0 && range > 40)
-      ? ok(`assets blocked (${label}) -> 0 sprites, 0 textures, still boots, plays and lights the scene (range ${range.toFixed(0)})`)
-      : fail(`assets blocked (${label}) -> sprites=${s.sprites} textures=${s.textures} errors=${errors.length} range=${range.toFixed(0)}`);
+    const none = s.sprites === 0 && s.textures === 0 && s.scenes === 0
+      && s.beasts === 0 && s.forts === 0;
+    (none && errors.length === 0 && range > 40)
+      ? ok(`assets blocked (${label}) -> every art section empty, still boots, plays and lights the scene (range ${range.toFixed(0)})`)
+      : fail(`assets blocked (${label}) -> sprites=${s.sprites} textures=${s.textures} scenes=${s.scenes} beasts=${s.beasts} forts=${s.forts} errors=${errors.length} range=${range.toFixed(0)}`);
     await ctx.close();
   }
 } finally {

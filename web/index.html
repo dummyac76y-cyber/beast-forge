@@ -15,12 +15,12 @@
       <span class="name">Beast&nbsp;Forge</span>
     </div>
     <nav id="nav">
-      <button data-screen="menu" class="on">Base</button>
-      <button data-screen="campaign">Campaign</button>
-      <button data-screen="arena">Arena</button>
-      <button data-screen="forge">Forge</button>
-      <button data-screen="armory">Armory</button>
-      <button data-screen="roster">Roster</button>
+      <button data-screen="menu" title="Base" class="on"><span class="ni" aria-hidden="true">🏰</span>Base</button>
+      <button data-screen="campaign" title="Campaign"><span class="ni" aria-hidden="true">⚔</span>Campaign</button>
+      <button data-screen="arena" title="Arena"><span class="ni" aria-hidden="true">∞</span>Arena</button>
+      <button data-screen="forge" title="Forge"><span class="ni" aria-hidden="true">⚒</span>Forge</button>
+      <button data-screen="armory" title="Armory"><span class="ni" aria-hidden="true">🛡</span>Armory</button>
+      <button data-screen="roster" title="Roster"><span class="ni" aria-hidden="true">📜</span>Roster</button>
     </nav>
     <div class="right">
       <span id="chips"></span>
@@ -37,10 +37,13 @@
   <script src="js/repo.js"></script>
   <script src="js/engine.js"></script>
   <script src="js/audio.js"></script>
+  <!-- Creature rig must load before render.js constructs a Renderer. -->
+  <script src="js/beastparts.js"></script>
   <script src="js/render.js"></script>
   <script src="js/ui.js"></script>
-  <!-- WebGL renderer. Deferred by definition, so it finishes executing before
-       the DOMContentLoaded handler in ui.js builds a battle screen. -->
+  <!-- WebGL renderer, kept working behind ?3d but no longer the default.
+       Deferred by definition, so it finishes executing before the
+       DOMContentLoaded handler in ui.js builds a battle screen. -->
   <script type="module" src="js/render3d.js"></script>
 </body>
 </html>

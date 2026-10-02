@@ -26,6 +26,11 @@ class Renderer {
     this.ctx = canvas.getContext('2d');
     this.assets = assets || (typeof globalThis !== 'undefined' ? globalThis.__beastForgeAssets : null);
     this.scaleX = 1; this.scaleY = 1;
+    // Painted creature rig. Null-safe: with no atlas loaded every draw falls
+    // through to the procedural silhouettes below.
+    const Rig = typeof globalThis !== 'undefined' && globalThis.__beastForgeRig;
+    this.rig = Rig ? new Rig.BeastRig(this.assets) : null;
+    this.time = 0;
     this.resize();
   }
 
@@ -34,6 +39,16 @@ class Renderer {
   sprite(kind, arg) {
     if (!this.assets || typeof this.assets.sprite !== 'function') return null;
     try { return this.assets.sprite(kind, arg); } catch (e) { return null; }
+  }
+
+  scene(key) {
+    if (!this.assets || typeof this.assets.scene !== 'function') return null;
+    try { return this.assets.scene(key); } catch (e) { return null; }
+  }
+
+  fortFrame(name) {
+    if (!this.assets || typeof this.assets.fortFrames !== 'function') return null;
+    try { return this.assets.fortFrames(name); } catch (e) { return null; }
   }
 
   // Blit a sprite centred on (x,y) in virtual space, optionally mirrored.
@@ -70,23 +85,38 @@ class Renderer {
     return (lane >= 0 && lane < 5) ? lane : -1;
   }
 
+  /**
+   * Cover-fit an image over the whole canvas. Anchored to the top rather than
+   * centred: the painted backdrops put the horizon in their upper third, and
+   * centring pushes it behind the lanes and wastes the composition.
+   */
+  coverDraw(img, biasY) {
+    const { ctx } = this;
+    const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
+    if (!iw || !ih) return;
+    const sr = iw / ih, dr = this.cssW / this.cssH;
+    let sw = iw, sh = ih, sx = 0, sy = 0;
+    if (sr > dr) { sw = sh * dr; sx = (iw - sw) / 2; }
+    else { sh = sw / dr; sy = (ih - sh) * (biasY === undefined ? 0.25 : biasY); }
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, this.cssW, this.cssH);
+  }
+
   drawBackground(themeKey) {
     const t = THEMES[themeKey] || THEMES.forest;
     const { ctx } = this;
 
-    // Full-bleed painted background wins if the manifest supplies one.
+    // Painted backdrop from the original build, preferred over both the
+    // procedural gradient and the older generated bg_* sprite.
+    const painted = this.scene('scene_' + themeKey);
+    if (painted) {
+      this.coverDraw(painted.img, 0.2);
+      this.drawAtmosphere(themeKey);
+      return;
+    }
     const bg = this.sprite('bg_' + themeKey);
     if (bg) {
-      if (bg.cover) {
-        const sr = bg.img.naturalWidth / bg.img.naturalHeight;
-        const dr = this.cssW / this.cssH;
-        let sw = bg.img.naturalWidth, sh = bg.img.naturalHeight, sx = 0, sy = 0;
-        if (sr > dr) { sw = sh * dr; sx = (bg.img.naturalWidth - sw) / 2; }
-        else        { sh = sw / dr; sy = (bg.img.naturalHeight - sh) / 2; }
-        ctx.drawImage(bg.img, sx, sy, sw, sh, 0, 0, this.cssW, this.cssH);
-      } else {
-        ctx.drawImage(bg.img, 0, 0, this.cssW, this.cssH);
-      }
+      this.coverDraw(bg.img, 0.5);
+      this.drawAtmosphere(themeKey);
       return;
     }
 
@@ -117,6 +147,76 @@ class Renderer {
     ctx.fillRect(0, gy, this.cssW, this.cssH - gy);
   }
 
+  /**
+   * Atmosphere pass, drawn between the backdrop and the units.
+   *
+   * Deliberately restrained: a drifting ground fog, one soft light shaft, a
+   * handful of drifting motes and a corner vignette. The point is to give the
+   * painted backdrop depth and keep the eye in the middle of the board, not to
+   * fog up the lanes. Everything is a pure function of this.time, so a frame
+   * is reproducible and the whole pass is a handful of gradient fills.
+   */
+  drawAtmosphere(themeKey) {
+    const { ctx } = this;
+    const t = THEMES[themeKey] || THEMES.forest;
+    const W = this.cssW, H = this.cssH;
+    const gy = H * (LANE_START / VH);
+    const tm = this.time;
+
+    // Ground fog: two slow horizontal bands drifting in opposite directions.
+    for (let i = 0; i < 2; i++) {
+      const speed = i ? -7 : 11;
+      const y = gy + (i ? H * 0.10 : -H * 0.03) + Math.sin(tm * 0.25 + i) * H * 0.012;
+      const h = H * (i ? 0.20 : 0.13);
+      const off = ((tm * speed) % (W * 0.5) + W * 0.5) % (W * 0.5);
+      const g = ctx.createLinearGradient(0, y - h * 0.5, 0, y + h * 0.5);
+      g.addColorStop(0, 'rgba(190,205,235,0)');
+      g.addColorStop(0.5, `rgba(190,205,235,${i ? 0.07 : 0.05})`);
+      g.addColorStop(1, 'rgba(190,205,235,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(-off, y - h * 0.5, W * 1.5, h);
+    }
+
+    // Light shaft from the upper left, breathing slowly.
+    const shaft = ctx.createLinearGradient(0, 0, W * 0.55, H * 0.8);
+    const sa = 0.05 + Math.sin(tm * 0.5) * 0.015;
+    shaft.addColorStop(0, `rgba(255,236,190,${sa})`);
+    shaft.addColorStop(1, 'rgba(255,236,190,0)');
+    ctx.fillStyle = shaft;
+    ctx.beginPath();
+    ctx.moveTo(W * 0.02, 0); ctx.lineTo(W * 0.34, 0);
+    ctx.lineTo(W * 0.62, H); ctx.lineTo(W * 0.16, H);
+    ctx.closePath(); ctx.fill();
+
+    // Ambient motes. Fixed positions from a cheap hash, so they never
+    // respawn visibly and there is no allocation per frame.
+    ctx.fillStyle = t.particle || 'rgba(255,213,79,0.5)';
+    for (let i = 0; i < 26; i++) {
+      const seed = i * 2654435761 % 1000 / 1000;
+      const bx = ((i * 97) % 100) / 100;
+      const sp = 0.012 + seed * 0.03;
+      const y = H - ((tm * sp * H) + seed * H * 2) % (H * 1.15);
+      const x = bx * W + Math.sin(tm * 0.6 + i) * W * 0.012;
+      const a = 0.10 + seed * 0.22;
+      ctx.globalAlpha = a * (0.5 + 0.5 * Math.sin(tm * 1.3 + i * 2));
+      ctx.beginPath();
+      ctx.arc(x, y, 0.8 + seed * 1.7, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  /** Corner darkening drawn last, so the board sits inside a frame. */
+  drawVignette() {
+    const { ctx } = this;
+    const W = this.cssW, H = this.cssH;
+    const g = ctx.createRadialGradient(W / 2, H * 0.52, H * 0.25, W / 2, H * 0.52, H * 0.95);
+    g.addColorStop(0, 'rgba(0,0,0,0)');
+    g.addColorStop(1, 'rgba(0,0,0,0.45)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+  }
+
   drawLanes(selectedLane, hoveredLane) {
     const { ctx } = this;
     for (let i = 0; i < 5; i++) {
@@ -138,6 +238,29 @@ class Renderer {
     const y0 = (LANE_START - 8) * this.scaleY;
     const h = (5 * LANE_HEIGHT + 16) * this.scaleY;
     const frac = Math.max(0, fort.currentHp / fort.maxHp);
+
+    this.drawFortHpBar(x, y0, frac, isPlayer);
+
+    // Painted fortress from the original build, with a damage state: the
+    // castle visibly collapses as its HP falls instead of only shrinking.
+    const state = frac > 0.66 ? 1 : (frac > 0.33 ? 2 : 3);
+    const painted = this.fortFrame(`castle_${isPlayer ? 1 : 2}_${state}`);
+    if (painted) {
+      const [rx, ry, rw, rh] = painted.rect;
+      // Anchor to the same virtual point the lanes do, and scale so a 480px
+      // painted tower covers the full five-lane height.
+      const targetH = (5 * LANE_HEIGHT + 24) * this.scaleY;
+      const k = targetH / rh;
+      const targetW = rw * k;
+      const cx = (isPlayer ? 60 : 940) * this.scaleX;
+      const baseY = (LANE_START + 5 * LANE_HEIGHT + 8) * this.scaleY;
+      ctx.save();
+      if (!isPlayer) { ctx.translate(cx, baseY); ctx.scale(-1, 1); ctx.translate(-cx, -baseY); }
+      ctx.drawImage(painted.img, rx, ry, rw, rh,
+        cx - targetW / 2, baseY - targetH, targetW, targetH);
+      ctx.restore();
+      return;
+    }
 
     // Painted fort sprite wins when supplied.
     const spec = this.sprite('fort_' + (isPlayer ? 'player' : 'enemy'));
@@ -174,6 +297,23 @@ class Renderer {
     ctx.fillRect(bx, by, bw * frac, bh);
   }
 
+  /** Shared HP bar so every fort path draws it identically. */
+  drawFortHpBar(cx, y0, frac, isPlayer) {
+    const { ctx } = this;
+    const bw = 60 * this.scaleX, bh = 7 * this.scaleY;
+    const bx = cx - bw / 2, by = y0 - 18 * this.scaleY;
+    ctx.fillStyle = 'rgba(0,0,0,0.72)';
+    ctx.fillRect(bx - 1, by - 1, bw + 2, bh + 2);
+    ctx.fillStyle = frac > 0.35 ? (isPlayer ? '#4CAF50' : '#FF5252') : '#FF1744';
+    ctx.fillRect(bx, by, bw * frac, bh);
+    // Notches at quarter marks: readable at a glance even when the bar is tiny.
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    for (let i = 1; i < 4; i++) ctx.fillRect(bx + (bw / 4) * i, by, 1, bh);
+    ctx.strokeStyle = isPlayer ? 'rgba(120,220,160,0.55)' : 'rgba(255,140,140,0.55)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(bx - 0.5, by - 0.5, bw + 1, bh + 1);
+  }
+
   // Beast silhouettes by race, tinted by element.
   drawUnit(u) {
     const { ctx } = this;
@@ -184,6 +324,35 @@ class Renderer {
     const hpFrac = Math.max(0, u.currentHp / u.maxHp);
     const bob = u.state === 'MARCHING' ? Math.sin(performance.now() / 90 + u.laneIndex) * 2 : 0;
     const r = 15 * s;
+
+    // Painted creature from the original build, composed from its parts and
+    // posed by the rig. Preferred over the older generated unit_* sprite.
+    if (this.rig) {
+      const pose = u.state === 'DYING' ? 'die'
+        : u.state === 'ATTACKING' ? 'attack'
+        : u.state === 'MARCHING' ? 'walk' : 'idle';
+      // Target a consistent on-screen height so a hippo and a dragon both read
+      // at the same weight; the rig knows each creature's true proportions.
+      const rig = this.rig.get(u.cardId);
+      if (rig) {
+        const targetH = (LANE_HEIGHT * 0.86) * this.scaleY;
+        const drawn = this.rig.draw(ctx, u.cardId, x, y, pose, this.time, {
+          scale: targetH / rig.height,
+          facing: u.isPlayer ? 1 : -1,
+          flash: u.state === 'ATTACKING' ? 0.22 : 0
+        });
+        if (drawn) {
+          // Element aura under the creature keeps affinity readable whatever
+          // the painted beast happens to look like.
+          const aura = ctx.createRadialGradient(x, y - r * 0.6, 2, x, y - r * 0.6, r * 1.9);
+          aura.addColorStop(0, col + '2e'); aura.addColorStop(1, col + '00');
+          ctx.fillStyle = aura;
+          ctx.beginPath(); ctx.arc(x, y - r * 0.6, r * 1.9, 0, Math.PI * 2); ctx.fill();
+          this.drawUnitBars(u, x, y, r, 0);
+          return;
+        }
+      }
+    }
 
     // Painted unit sprite wins when supplied; element aura is still drawn so the
     // player can read affinity at a glance regardless of art source.
@@ -321,6 +490,14 @@ class Renderer {
   render(engine, selectedLane, hoveredLane) {
     this.resize();
     this.clear();
+    // Wall-clock, not the engine clock: atmosphere and idle animation keep
+    // moving while the battle is paused, so the scene never looks frozen.
+    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
+    if (this._lastFrame === undefined) this._lastFrame = now;
+    this.time += Math.min(0.05, now - this._lastFrame);
+    this._lastFrame = now;
+
+    // BACKDROP -> ATMOSPHERE -> BOARD -> UNITS -> VFX -> FOREGROUND
     this.drawBackground(engine.stageConfig.bgTheme);
     this.drawLanes(selectedLane, hoveredLane);
     this.drawFort(engine.playerFort, true);
@@ -330,6 +507,7 @@ class Renderer {
     this.drawProjectiles(engine.projectiles);
     this.drawParticles(engine.particles);
     this.drawFloatingTexts(engine.floatingTexts);
+    this.drawVignette();
   }
 }
 

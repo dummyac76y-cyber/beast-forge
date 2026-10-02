@@ -131,3 +131,49 @@ suspended.
 
 There is no `package.json` test script in the upstream repo and no pre-existing
 test framework — `tools/ai-studio/` introduced both.
+## Screen composition (`web/js/ui.js`)
+
+Every non-battle screen is built through one helper:
+
+```js
+const root = scene({ back: 'scene_citadel' }, 14);   // scene key, parallax depth
+const body = sceneBody(root);                        // content goes here
+host.appendChild(root);
+```
+
+`scene()` emits a `.scene` root containing `.layer` elements
+(`lyr-back` `lyr-mid` `lyr-near` `lyr-haze` `lyr-fog` `lyr-firelight`
+`lyr-frame`) plus one `.scene-body` content slot. Layers are only emitted for
+scene keys the manifest actually resolved, so with every asset blocked the
+screen still gets graded scrims rather than a flat void.
+
+Pointer parallax writes `--px` / `--py` on the root; each layer shifts by its
+own `--dx` / `--dy`. It is disabled under `prefers-reduced-motion`.
+
+Notable constraint: `BeastRig.draw(ctx, cardId, x, y, ...)` takes the rig's
+**left edge and ground line**, not a centre point. The roster and forge
+portraits therefore compute `left = (size - rig.width * scale) / 2` explicitly.
+Passing `size / 2` puts every beast hard against the right edge of its tile —
+`npm run qa` now measures portrait centring so that regression cannot return.
+
+## Beast rig (`web/js/beastparts.js`)
+
+`resolveLayout(race, parts, bw, bh)` composes the original painted parts into a
+drawable rig at draw time. The plists in the source tree record zero offsets for
+every frame, so the original bone layout is unrecoverable and this rig is a new
+one, not a reconstruction.
+
+Exposed three ways for compatibility: `globalThis.__beastForgeRig`, named script
+globals (`BeastRig`, `LAYOUT`, `resolveLayout`) for classic `<script>` order,
+and `module.exports` for Node. `beastparts.js` loads **before** `render.js` in
+`web/index.html`.
+
+`check-beast-layout.mjs` composes all twelve beasts and asserts silhouette
+coherence, coverage, grounding and joint connectivity.
+
+## Asset lookups by hit/miss
+
+`AssetStore` counts `sceneHits` / `sceneMisses` alongside the existing sprite and
+texture counters. QA asserts the renderer actually *consumed* manifest art rather
+than silently falling through to procedural drawing, because a silent fallback
+looks exactly like success from the outside.

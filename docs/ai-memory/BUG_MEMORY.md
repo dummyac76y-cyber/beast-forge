@@ -142,3 +142,55 @@ skips a file it could not read is worse than one that fails.
 
 **Lesson.** When a utility is reused by a second consumer, widen it to the union
 of both callers' inputs rather than special-casing at the call site.
+---
+
+## B6 — `AssetStore` base path was `assets//`, and scene records dropped `file`
+
+**Status:** FIXED (2026-10-02) · **Found by:** `npm run qa` console-error check
+
+**Symptom.** Two `404 (Not Found)` console errors per page load, on both
+renderers. The failing URL was `/assets//undefined`.
+
+**Root cause.** Two independent defects that compounded:
+
+1. `AssetStore`'s constructor built `this.base` as
+   `(baseUrl || 'assets/') + (baseUrl ? ... : '/')`. With no explicit base this
+   evaluated to `'assets/' + '/'` = `'assets//'`. Every asset URL in the game
+   carried a doubled slash.
+2. The `_loadScenes` record was `{ img, frameW, frameH, cover }` — it did not
+   keep `file`. The new screen code reached `assets.url(s.file)` directly and
+   got `undefined`.
+
+The 404 said "missing file", which sent the investigation to the manifest. All
+48 manifest references existed. The asset pipeline was fine; the code building
+the URL was not.
+
+**Fix.** Base is now built by normalising to exactly one separator. Scene records
+keep `file`. And `AssetStore.sceneUrl(key)` is the single accessor, so no caller
+open-codes `url(spec.file)` against a record shape it does not own.
+
+**Lesson.** A 404 whose path contains `undefined` is a code bug wearing a
+missing-file costume. Check the URL *construction* before auditing the manifest.
+**Debugging note:** the console-error filter in `run-qa.mjs` drops
+`/favicon/i`, but Playwright's resource-failure message carries no URL, so the
+filter never fires for it. Trace 404s with `page.on('response')` and print
+`r.url()` directly rather than relying on console text.
+
+---
+
+## B7 — `packCard` referenced an `out` that was not in scope
+
+**Status:** FIXED (2026-10-02) · **Found by:** reading the armory rewrite
+
+**Symptom.** Clicking "Open" on a summon pack would throw a `ReferenceError`
+before painting the reveal. Latent since the feature was written.
+
+**Root cause.** `packCard` is declared at IIFE scope but referenced `out`, a
+`const` declared inside `armory()`. The reference never resolved. Nothing in QA
+clicked a pack, so it was never caught.
+
+**Fix.** `out` is now an explicit parameter of `packCard`.
+
+**Lesson.** A closure over a sibling function's local is a compile-time-legal,
+runtime-fatal mistake that no static check in this repo would have flagged.
+Anything a card-builder needs to mutate must be passed in.

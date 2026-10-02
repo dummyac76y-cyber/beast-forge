@@ -1,0 +1,29 @@
+{
+ "_readme": "Painted backdrops from the original Fort Conquer build, copied verbatim.",
+ "scenes": {
+  "scene_forest": {
+   "file": "scenes/bg1_v001.jpg",
+   "cover": true
+  },
+  "scene_volcano": {
+   "file": "scenes/bg2_v001.jpg",
+   "cover": true
+  },
+  "scene_snow": {
+   "file": "scenes/bg3_v001.jpg",
+   "cover": true
+  },
+  "scene_citadel": {
+   "file": "scenes/bg4_v001.jpg",
+   "cover": true
+  },
+  "scene_arena": {
+   "file": "scenes/arena_bg_v001.jpg",
+   "cover": true
+  },
+  "scene_base": {
+   "file": "scenes/cover_bg_v001.jpg",
+   "cover": true
+  }
+ }
+}

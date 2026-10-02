@@ -114,19 +114,35 @@ if (!fs.existsSync(manifestPath)) {
       'game falls back to procedural art + synthesised audio');
 } else {
   const m = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-  const spriteCount = Object.keys(m.sprites || {}).length;
-  const audioCount = Object.keys(m.audio || {}).length;
-  const textureCount = Object.keys(m.textures || {}).length;
-  let missing = 0;
+  const n = k => Object.keys(m[k] || {}).length;
+  const spriteCount = n('sprites');
+  const audioCount = n('audio');
+  const textureCount = n('textures');
+  const sceneCount = n('scenes');
+  const beastAtlasCount = n('beasts');
+  const fortAtlasCount = n('forts');
+  // Every referenced path, including the JSON sidecars the atlases carry.
+  // Omitting the sidecars here would report READY while the beast rig silently
+  // fell back to procedural shapes.
   const allFiles = [
     ...Object.values(m.sprites || {}), ...Object.values(m.audio || {}),
-    ...Object.values(m.textures || {}), ...(m.fonts || [])
+    ...Object.values(m.textures || {}), ...(m.fonts || []),
+    ...Object.values(m.scenes || {}),
+    ...Object.values(m.beasts || {}), ...Object.values(m.forts || {})
   ];
-  for (const s of allFiles) {
-    if (!fs.existsSync(path.join(REPO, 'web', 'assets', s.file))) missing++;
+  const sidecars = [
+    ...Object.values(m.beasts || {}).map(s => s.parts),
+    ...Object.values(m.forts || {}).map(s => s.frames)
+  ].filter(Boolean);
+  let missing = 0;
+  for (const f of [...allFiles, ...sidecars]) {
+    if (f && f.file && !fs.existsSync(path.join(REPO, 'web', 'assets', f.file))) missing++;
   }
   add('Assets', 'Manifest', missing ? 'INCOMPLETE' : 'READY',
-      `${spriteCount} sprites, ${audioCount} clips, ${textureCount} tiling maps, ${(m.fonts || []).length} fonts` +
+      `${spriteCount} sprites, ${audioCount} clips, ${textureCount} tiling maps, ` +
+      `${sceneCount} scenes, ${beastAtlasCount} beast atlases, ${fortAtlasCount} fort atlas, ` +
+      `${(m.fonts || []).length} fonts` +
+      (sidecars.length ? `, ${sidecars.length} sidecars` : '') +
       (missing ? `, ${missing} FILE(S) MISSING` : ', all files present'));
 }
 

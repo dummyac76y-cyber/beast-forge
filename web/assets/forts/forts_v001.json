@@ -1,0 +1,41 @@
+{
+ "_readme": "Player castle_1_1..3 and enemy castle_2_1..3 damage states, copied verbatim from app/src/main/assets/gfx/bg/forts.png with its original TexturePacker rects. Frame 1 is intact, 3 is nearly ruined.",
+ "frames": {
+  "castle_1_1.png": [
+   326,
+   1,
+   118,
+   480
+  ],
+  "castle_1_2.png": [
+   207,
+   1,
+   118,
+   480
+  ],
+  "castle_1_3.png": [
+   88,
+   1,
+   118,
+   466
+  ],
+  "castle_2_1.png": [
+   532,
+   1,
+   86,
+   480
+  ],
+  "castle_2_2.png": [
+   445,
+   1,
+   86,
+   480
+  ],
+  "castle_2_3.png": [
+   1,
+   1,
+   86,
+   291
+  ]
+ }
+}

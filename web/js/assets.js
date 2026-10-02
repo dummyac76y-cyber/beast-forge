@@ -54,9 +54,17 @@ const DEFAULT_MANIFEST_PATH = 'assets/manifest.json';
 
 class AssetStore {
   constructor(baseUrl) {
-    this.base = (baseUrl || 'assets/') + (baseUrl && baseUrl.slice(-1) === '/' ? '' : '/');
+    // Exactly one separator, whichever form the caller passes. The previous
+    // version appended '/' to a default that already ended in '/', which made
+    // every URL "assets//x" -- harmless-looking, but it produced 404s that
+    // looked like missing files when a caller passed an undefined path.
+    const raw = baseUrl || 'assets/';
+    this.base = raw.slice(-1) === '/' ? raw : raw + '/';
     this.manifest = null;
     this.sprites = {};      // key -> { img, frameW, frameH, anchorX, anchorY, flipOnEnemy, cover }
+    this.scenes = {};       // key -> { img, frameW, frameH, cover }; painted backdrops (may be JPEG)
+    this.beasts = {};       // key -> { img, parts }; painted part atlases + frame rects
+    this.forts = {};        // key -> { img, frames }; fortress atlas + damage-state rects
     this.audio = {};        // key -> { buffer, volume }
     this._rawAudio = {};    // key -> { bytes, volume }; decoded lazily after a gesture
     this.textures = {};     // key -> { img, repeat }; tiling maps for the WebGL renderer
@@ -64,7 +72,7 @@ class AssetStore {
     this.sources = [];      // human-readable attribution, surfaced in the UI
     this.loaded = false;
     this.failed = false;
-    this.stats = { spriteHits: 0, spriteMisses: 0, audioHits: 0, audioMisses: 0, textureHits: 0, textureMisses: 0, fontsLoaded: 0, errors: [] };
+    this.stats = { spriteHits: 0, spriteMisses: 0, sceneHits: 0, sceneMisses: 0, beastHits: 0, beastMisses: 0, audioHits: 0, audioMisses: 0, textureHits: 0, textureMisses: 0, fontsLoaded: 0, errors: [] };
   }
 
   url(rel) {
@@ -103,6 +111,8 @@ class AssetStore {
         if (Array.isArray(m.credits)) m.credits.forEach(c => this.credit(c));
         return Promise.all([
           this._loadSprites(m.sprites),
+          this._loadScenes(m.scenes),
+          this._loadBeasts(m.beasts, m.forts),
           this._loadAudio(m.audio),
           this._loadTextures(m.textures),
           this._loadFonts(m.fonts)
@@ -139,6 +149,59 @@ class AssetStore {
         img.src = this.url(spec.file);
       });
     });
+    return Promise.all(jobs);
+  }
+
+  // Painted backdrops. Kept apart from `sprites` because they are JPEG: the
+  // verifier checks sprite dimensions against a PNG header, and there is no
+  // JPEG decoder in the asset pipeline to measure one with.
+  _loadScenes(map) {
+    if (!map) return Promise.resolve();
+    return Promise.all(Object.keys(map).map(key => {
+      const spec = map[key] || {};
+      if (!spec.file) return Promise.resolve();
+      return new Promise(resolve => {
+        const img = new Image();
+        img.onload = () => {
+          this.scenes[key] = {
+            img,
+            // Kept so sceneUrl() can rebuild the URL for CSS layer painting;
+            // without it a backdrop loads fine and then 404s when the DOM
+            // tries to reference it.
+            file: spec.file,
+            frameW: spec.frameW || img.naturalWidth || 0,
+            frameH: spec.frameH || img.naturalHeight || 0,
+            cover: spec.cover !== false
+          };
+          resolve();
+        };
+        img.onerror = () => { this.stats.errors.push('scene ' + key + ': ' + spec.file); resolve(); };
+        img.src = this.url(spec.file);
+      });
+    }));
+  }
+
+  // Painted part atlases (beasts) and the fortress atlas. Each carries a JSON
+  // sidecar of frame rects; both are optional, so a half-loaded atlas simply
+  // falls back to procedural art rather than drawing garbage.
+  _loadBeasts(beastMap, fortMap) {
+    const jobs = [];
+    const loadAtlas = (key, spec, bucket, sidecarKey) => {
+      if (!spec || !spec.file) return Promise.resolve();
+      const rects = spec[sidecarKey]
+        ? fetch(this.url(spec[sidecarKey]), { cache: 'no-cache' })
+          .then(r => (r.ok ? r.json() : null))
+          .catch(() => null)
+        : Promise.resolve(null);
+      jobs.push(rects.then(meta => new Promise(resolve => {
+        const img = new Image();
+        img.onload = () => { this[bucket][key] = { img, meta }; resolve(); };
+        img.onerror = () => { this.stats.errors.push(bucket + ' ' + key + ': ' + spec.file); resolve(); };
+        img.src = this.url(spec.file);
+      })));
+    };
+    for (const [key, spec] of Object.entries(beastMap || {})) loadAtlas(key, spec, 'beasts', 'parts');
+    for (const [key, spec] of Object.entries(fortMap || {})) loadAtlas(key, spec, 'forts', 'frames');
     return Promise.all(jobs);
   }
 
@@ -272,7 +335,57 @@ class AssetStore {
     return t || null;
   }
 
+  /** Painted backdrop, or null -> caller keeps its procedural gradient. */
+  scene(key) {
+    const s = this.scenes[key];
+    if (s) this.stats.sceneHits++;
+    else this.stats.sceneMisses++;
+    return s || null;
+  }
+
+  /**
+   * URL for a painted backdrop, or null when the key is unknown or the scene
+   * failed to decode. The loader records deliberately do not carry `file`, so
+   * URL construction stays here rather than being open-coded in the UI.
+   */
+  sceneUrl(key) {
+    const s = this.scene(key);
+    return s ? this.url(s.file) : null;
+  }
+
+  /**
+   * Frame rects for one beast, plus the atlas that holds them.
+   * The three atlases each ship the same sidecar, so we pick the entry whose
+   * `sheet` matches this atlas rather than duplicating the metadata per atlas.
+   */
+  beastParts(cardId) {
+    for (const [key, atlas] of Object.entries(this.beasts)) {
+      const b = atlas && atlas.meta && atlas.meta.beasts && atlas.meta.beasts[cardId];
+      // Manifest keys are `beasts_<sheet>`; the sidecar tags each beast with
+      // its sheet, so the key tells us which atlas actually holds the pixels.
+      if (b && b.sheet === key.replace(/^beasts_/, '')) {
+        this.stats.beastHits++;
+        return { img: atlas.img, parts: b.parts, race: b.race, species: b.species };
+      }
+    }
+    this.stats.beastMisses++;
+    return null;
+  }
+
+  /** Fortress frame rects by name, e.g. castle_1_1. */
+  fortFrames(name) {
+    const atlas = this.forts.fort_atlas;
+    if (atlas && atlas.meta && atlas.meta.frames && atlas.meta.frames[name]) {
+      this.stats.beastHits++;
+      return { img: atlas.img, rect: atlas.meta.frames[name] };
+    }
+    this.stats.beastMisses++;
+    return null;
+  }
+
   hasAnySprites()   { return Object.keys(this.sprites).length > 0; }
+  hasAnyScenes()    { return Object.keys(this.scenes).length > 0; }
+  hasAnyBeasts()    { return Object.keys(this.beasts).length > 0; }
   hasAnyAudio()     { return Object.keys(this.audio).length > 0; }
   hasAnyTextures()  { return Object.keys(this.textures).length > 0; }
   hasFonts()        { return this.fonts.length > 0; }
@@ -281,6 +394,8 @@ class AssetStore {
   summary() {
     return (this.loaded ? 'loaded' : 'pending') +
       ' sprites=' + Object.keys(this.sprites).length +
+      ' scenes=' + Object.keys(this.scenes).length +
+      ' beasts=' + Object.keys(this.beasts).length +
       ' audio=' + Object.keys(this.audio).length +
       ' textures=' + Object.keys(this.textures).length +
       ' fonts=' + this.fonts.length +
