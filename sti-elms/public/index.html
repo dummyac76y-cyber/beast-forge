@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>STI eLMS Dashboard</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">eLMS</span>
+    <span class="brand-text">personal dashboard</span>
+  </div>
+  <div class="topbar-right" id="topbarRight" hidden>
+    <span class="who" id="who"></span>
+    <button type="button" class="btn" id="refreshBtn">Refresh</button>
+    <a class="btn btn-ghost" id="rawBtn" href="/api/raw?path=/user_dashboard" target="_blank" rel="noopener">Raw HTML</a>
+    <button type="button" class="btn btn-ghost" id="logoutBtn">Sign out</button>
+  </div>
+</header>
+
+<main>
+  <section id="loginView" class="view">
+    <div class="card login-card">
+      <h1>Sign in to your eLMS</h1>
+      <p class="muted">
+        This app talks to <code>elms.sti.edu</code> as you, then renders your own pages.
+        Your password is forwarded once and never stored &mdash; only the session
+        cookie is kept, encrypted, in this browser.
+      </p>
+      <form id="loginForm" autocomplete="on">
+        <label for="userid">eLMS userid</label>
+        <input id="userid" name="userid" type="text" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" required>
+
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+
+        <button type="submit" class="btn btn-primary" id="loginBtn">Sign in</button>
+      </form>
+      <p class="error" id="loginError" hidden></p>
+      <p class="muted small">
+        Forgot it? Reset it from the eLMS login page, or see the
+        <a href="https://elms.sti.edu/page/show/495374" target="_blank" rel="noopener">STI eLMS FAQ</a>.
+      </p>
+    </div>
+  </section>
+
+  <section id="dashView" class="view" hidden>
+    <div class="status" id="status" hidden></div>
+
+    <div class="stats" id="stats"></div>
+
+    <div class="filterbar">
+      <input id="filter" type="search" placeholder="Filter everything&hellip;" aria-label="Filter dashboard content">
+      <span class="muted small" id="filterCount"></span>
+    </div>
+
+    <div class="columns">
+      <div class="col">
+        <section class="panel" id="deadlinesPanel">
+          <h2>Deadlines &amp; submissions</h2>
+          <div id="deadlines"></div>
+        </section>
+        <section class="panel" id="coursesPanel">
+          <h2>Courses</h2>
+          <div id="courses"></div>
+        </section>
+      </div>
+      <div class="col" id="sectionsCol">
+        <h2 class="col-title">Everything else</h2>
+        <div id="sections"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>
